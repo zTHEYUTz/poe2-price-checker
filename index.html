@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POE2 Price Checker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f0d0b; --panel: #1a1612; --panel2: #221d17; --line: #3a3026;
+    --text: #e8dfd2; --muted: #9c8f7e; --gold: #d6a84a; --gold-dim: #8c6d2f;
+    --unique: #d98c3a; --rare: #e6d468; --magic: #8888ff; --gem: #3fb8a8; --currency: #b8a77a;
+    --ok: #7fb069; --bad: #d26a5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 "IBM Plex Sans Thai", system-ui, sans-serif;
+    background-image: radial-gradient(ellipse at top, #2a1f14 0%, var(--bg) 60%);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 16px 64px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; margin-bottom: 18px; }
+  h1 { font-family: Cinzel, serif; font-weight: 700; letter-spacing: .04em; color: var(--gold); margin: 0; font-size: clamp(24px, 5vw, 34px); }
+  .sub { color: var(--muted); margin: 2px 0 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; overflow-x: auto; }
+  .tab {
+    background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted);
+    padding: 10px 16px; font: 500 15px "IBM Plex Sans Thai", sans-serif; cursor: pointer; white-space: nowrap;
+  }
+  .tab[aria-selected=true] { color: var(--gold); border-bottom-color: var(--gold); }
+  .pane[hidden] { display: none; }
+  label.lbl { display: block; font-weight: 600; margin-bottom: 6px; }
+  textarea, input[type=search] {
+    width: 100%; padding: 12px; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  textarea { min-height: 110px; resize: vertical; font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  #itemText { min-height: 200px; }
+  input[type=search] { font: 16px "IBM Plex Sans Thai", sans-serif; }
+  textarea:focus, select:focus, input:focus, button:focus-visible { outline: 2px solid var(--gold-dim); outline-offset: 1px; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; margin-top: 16px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field span { font-size: 13px; color: var(--muted); }
+  select, input[type=number] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 10px; font: inherit; min-width: 180px;
+  }
+  input[type=number] { min-width: 0; width: 90px; }
+  .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 9px 0; }
+  .toggle input { accent-color: var(--gold); width: 18px; height: 18px; }
+  button.go {
+    margin-left: auto; background: linear-gradient(#e0b55a, #b5872f); color: #1a1208;
+    border: 0; border-radius: 8px; padding: 11px 26px; font: 600 16px "IBM Plex Sans Thai", sans-serif; cursor: pointer;
+  }
+  button.go:disabled { opacity: .5; cursor: wait; }
+  button.ghost { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  .status { display: none; align-items: center; gap: 10px; margin-top: 18px; color: var(--muted); }
+  .status.on { display: flex; }
+  .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--gold); animation: s .8s linear infinite; flex: none; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .err { display: none; margin-top: 18px; padding: 12px 14px; border-radius: 8px; background: #3a1a16; border: 1px solid #6b2c24; color: #f0c0b8; }
+
+  /* search */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); color: var(--muted); border-radius: 99px; padding: 4px 12px; font: 13px "IBM Plex Sans Thai", sans-serif; cursor: pointer; }
+  .chip[aria-pressed=true] { color: #1a1208; background: var(--gold); border-color: var(--gold); }
+  .list { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .it { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .it:last-child { border-bottom: 0; }
+  .it img, .it .noimg { width: 40px; height: 40px; object-fit: contain; }
+  .it .nm { font-weight: 600; }
+  .it .cat { color: var(--muted); font-size: 12.5px; }
+  .it .pr { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .it .pr small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .warn { color: var(--bad); font-size: 12px; }
+  .it.low .pr { opacity: .55; }
+  .count { color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+  /* single item */
+  .itemcard { margin-top: 20px; display: none; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+  .itemhead { padding: 14px 18px; background: var(--panel2); border-bottom: 1px solid var(--line); text-align: center; }
+  .itemhead .n { font-size: 18px; font-weight: 600; }
+  .itemhead .pic { display: block; margin: 0 auto 8px; max-width: 120px; max-height: 180px; object-fit: contain; }
+  .thumb { width: 36px; height: 36px; object-fit: contain; flex: none; }
+  .thumb.none { display: inline-block; }
+  .namecell { display: flex; gap: 10px; align-items: flex-start; }
+  .namecell > div { flex: 1; min-width: 0; }
+  .shop .who .thumb { vertical-align: middle; margin-right: 6px; }
+  .itemhead .b { color: var(--muted); }
+  .r-unique .n { color: var(--unique); } .r-rare .n { color: var(--rare); } .r-magic .n { color: var(--magic); }
+  .r-gem .n { color: var(--gem); } .r-currency .n { color: var(--currency); }
+  .mods { padding: 12px 18px; text-align: center; color: #9aa8ff; font-size: 14px; }
+  .mods .implicit, .mods .rune, .mods .enchant { color: #b7b0a2; }
+  .mods .corr { color: var(--bad); }
+  .bigprice { padding: 16px 18px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; justify-content: space-between; }
+  .bigprice .v { font-size: 28px; font-weight: 600; color: var(--gold); }
+  .bigprice .v2 { color: var(--muted); }
+
+  /* build */
+  #result { display: none; margin-top: 24px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .stat .k { color: var(--muted); font-size: 13px; }
+  .stat .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .stat.total { border-color: var(--gold-dim); }
+  .stat.total .v { color: var(--gold); font-size: 26px; }
+  .tablewrap { margin-top: 16px; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); min-width: 600px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel2); color: var(--muted); font-weight: 500; font-size: 13px; }
+  tr:last-child td { border-bottom: 0; }
+  td.price { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+  td.price.none { color: var(--muted); font-weight: 400; }
+  .slot { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .note { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+  .src { font-size: 12px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .src.trade { color: var(--rare); border-color: #5c5426; }
+  .src.ninja { color: var(--ok); border-color: #3b5530; }
+  .bar { height: 4px; background: var(--gold-dim); border-radius: 2px; margin-top: 6px; opacity: .7; }
+  .meta { color: var(--muted); margin: 0 0 12px; }
+  /* shop panel */
+  .shop { border-top: 1px solid var(--line); padding: 14px 18px; }
+  .shop:empty { display: none; }
+  .shop .top { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .shop .who { flex: 1 1 220px; }
+  .shop .who b { color: var(--text); }
+  .shop .who .note { display: block; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; padding: 8px 14px;
+    font: 500 14px "IBM Plex Sans Thai", sans-serif; cursor: pointer; text-decoration: none; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  }
+  .btn.warp { background: linear-gradient(#e0b55a, #b5872f); color: #1a1208; border: 0; font-weight: 600; }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  .btn.sm { padding: 4px 10px; font-size: 13px; }
+  .others { margin-top: 10px; display: grid; gap: 4px; }
+  .others .o { display: flex; gap: 10px; align-items: center; font-size: 13.5px; color: var(--muted); }
+  .others .o span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shopmsg { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  tr.shoprow td { background: var(--panel2); padding: 0; }
+  tr.shoprow .shop { border-top: 0; }
+  footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
+  @media (max-width: 600px) {
+    button.go { margin-left: 0; width: 100%; }
+    .it { grid-template-columns: 32px 1fr auto; padding: 8px 10px; }
+    .it img, .it .noimg { width: 32px; height: 32px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>POE2 Price Checker</h1>
+      <p class="sub">ราคาสดจาก poe.ninja และเทรดไซต์ทางการ</p>
+    </div>
+    <label class="field"><span>ลีก</span>
+      <select id="league"><option value="">กำลังโหลด…</option></select>
+    </label>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="search" aria-selected="true">ค้นหาไอเทม</button>
+    <button class="tab" role="tab" data-tab="item" aria-selected="false">วางไอเทมจากเกม</button>
+    <button class="tab" role="tab" data-tab="build" aria-selected="false">เช็คทั้งบิว</button>
+  </nav>
+
+  <!-- ===== Search ===== -->
+  <section class="pane" id="pane-search">
+    <input type="search" id="q" placeholder="พิมพ์ชื่อไอเทม เช่น Divine, Headhunter, Rune of…" autocomplete="off">
+    <div class="chips" id="chips"></div>
+    <div class="status" id="searchStatus"><div class="spin"></div><span>กำลังโหลดรายการไอเทมจาก poe.ninja…</span></div>
+    <div class="err" id="searchErr"></div>
+    <div class="list" id="list" hidden></div>
+    <div class="count" id="count"></div>
+  </section>
+
+  <!-- ===== Paste item ===== -->
+  <section class="pane" id="pane-item" hidden>
+    <div class="card">
+      <label class="lbl" for="itemText">ข้อความไอเทมจากเกม</label>
+      <textarea id="itemText" placeholder="Item Class: Gloves&#10;Rarity: Rare&#10;Doom Grip&#10;Vaal Gloves&#10;--------&#10;…"></textarea>
+      <div class="hint">ในเกม เอาเมาส์ชี้ที่ไอเทม → กด <kbd>Ctrl</kbd>+<kbd>C</kbd> → กลับมาวางที่นี่ (<kbd>Ctrl</kbd>+<kbd>V</kbd>) · ได้ทุกชนิด: ยูนีค, rare, magic, เจม, รูน, currency</div>
+      <div class="row">
+        <label class="field"><span>ความใกล้เคียง mod (rare)</span>
+          <input type="number" id="itemRatio" value="0.8" min="0.3" max="1" step="0.05">
+        </label>
+        <button class="go" id="itemGo">เช็คราคา</button>
+      </div>
+      <div class="status" id="itemStatus"><div class="spin"></div><span id="itemStatusText"></span></div>
+      <div class="err" id="itemErr"></div>
+    </div>
+    <div class="itemcard" id="itemCard">
+      <div class="itemhead" id="itemHead"></div>
+      <div class="mods" id="itemMods"></div>
+      <div class="bigprice" id="itemPrice"></div>
+      <div class="shop" id="itemShop"></div>
+    </div>
+  </section>
+
+  <!-- ===== Build ===== -->
+  <section class="pane" id="pane-build" hidden>
+    <div class="card">
+      <label class="lbl" for="src">PoB code หรือ ลิงก์ pobb.in / pastebin</label>
+      <textarea id="src" placeholder="eNrtfWt34ziS6Pf+FT6+X6s…   หรือ   https://pobb.in/xxxxxx"></textarea>
+      <div class="hint">บิวจาก poe.ninja / maxroll / mobalytics: กดปุ่ม Export หรือ Path of Building บนหน้าบิว → คัดลอกโค้ดมาวาง</div>
+      <div class="row">
+        <label class="toggle"><input type="checkbox" id="rares" checked> ค้นราคาไอเทม rare (ช้ากว่า ~1–3 นาที)</label>
+        <label class="field"><span>ความใกล้เคียง mod</span>
+          <input type="number" id="ratio" value="0.8" min="0.3" max="1" step="0.05">
+        </label>
+        <button class="go" id="go">เช็คราคา</button>
+      </div>
+      <div class="status" id="status"><div class="spin"></div><span id="statusText"></span>
+        <button class="ghost" id="stop" style="margin-left:auto">หยุด</button></div>
+      <div class="err" id="err"></div>
+    </div>
+    <section id="result">
+      <p class="meta" id="meta"></p>
+      <div class="summary">
+        <div class="stat total"><div class="k">รวมประมาณ</div><div class="v" id="tDiv">–</div><div class="k" id="tEx"></div></div>
+        <div class="stat"><div class="k">รายการที่มีราคา</div><div class="v" id="tCount">0</div></div>
+        <div class="stat"><div class="k">ไม่มีราคา</div><div class="v" id="tMissing">0</div></div>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>ช่อง</th><th>ไอเทม</th><th>แหล่ง</th><th style="text-align:right">ราคา</th><th>ร้าน</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+
+  <footer>ยูนีค / currency / เจม / รูน: ราคาจาก poe.ninja (อัปเดตราว 1 ชม.) · rare / magic: ค้นของที่ mod ใกล้เคียงในเทรดไซต์ แล้วใช้มัธยฐานของ 10 รายการที่ถูกที่สุด จึงเป็นค่าประมาณ</footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+let rates = { ex: null, div: null, primary: "?" };
+
+function fmt(v, r = rates) {
+  if (v == null) return null;
+  const parts = [];
+  if (r.div) parts.push(fmtNum(v / r.div) + " div");
+  if (r.ex) parts.push(fmtNum(v / r.ex, true) + " ex");
+  if (r.div && r.ex && v < r.div) parts.reverse();
+  return parts.length ? parts : [v.toFixed(2) + " " + r.primary];
+}
+function fmtNum(n, ex) {
+  if (ex || n >= 100) return Math.round(n).toLocaleString();
+  return n >= 10 ? n.toFixed(1) : n.toFixed(2);
+}
+
+async function streamPost(url, body, onEvent, signal) {
+  const res = await fetch(url, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok || !res.body) throw new Error("เซิร์ฟเวอร์ตอบกลับผิดพลาด (" + res.status + ")");
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const raw = buf.slice(0, i); buf = buf.slice(i + 1);
+      if (raw.trim()) onEvent(JSON.parse(raw));
+    }
+  }
+}
+function showErr(el, msg) { el.style.display = msg ? "block" : "none"; el.textContent = msg || ""; }
+
+/* ---------- item picture ---------- */
+function setItemPic(url) {
+  const head = $("itemHead");
+  head.querySelector(".pic")?.remove();
+  if (!url) return;
+  const img = document.createElement("img");
+  img.className = "pic"; img.src = url; img.alt = "";
+  img.onerror = () => img.remove();
+  head.prepend(img);
+}
+
+/* ---------- cheapest-seller panel ---------- */
+const CUR = { exalted: "Exalted", divine: "Divine", chaos: "Chaos", alch: "Alchemy", annul: "Annulment", regal: "Regal", vaal: "Vaal", mirror: "Mirror", aug: "Augmentation", transmute: "Transmutation", chance: "Chance" };
+const priceText = (x) => `${x.amount.toLocaleString()} ${CUR[x.currency] || x.currency}`;
+async function copyText(t, btn) {
+  try { await navigator.clipboard.writeText(t); }
+  catch {
+    const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch {} ta.remove();
+  }
+  const old = btn.textContent; btn.textContent = "คัดลอกแล้ว ✓"; setTimeout(() => (btn.textContent = old), 1500);
+}
+
+function shopPanel(line, el, r) {
+  if (!el) return;
+  if (!line.query) { el.innerHTML = ""; return; }
+  const ls = line.listings || [];
+  const best = ls[0];
+  const refreshLabel = line.searched || ls.length ? "↻ รีเฟรช หาร้านใหม่" : "หาร้านที่ถูกที่สุด";
+  let html = `<div class="top">`;
+  if (best) {
+    const f = best.value != null ? fmt(best.value, r) : null;
+    html += `<div class="who">ร้านถูกสุด: <b>${esc(best.seller)}</b> — <b>${esc(priceText(best))}</b>${f ? ` <span class="note">≈ ${esc(f.join(" / "))}</span>` : ""}
+      ${line.checkedAt ? `<span class="note">อัปเดต ${esc(line.checkedAt)}</span>` : ""}</div>
+      <a class="btn warp" href="${esc(line.search_url)}" target="_blank" rel="noopener">วาปไปร้าน ↗</a>
+      ${best.whisper ? `<button class="btn" data-act="copy">คัดลอกข้อความซื้อ</button>` : ""}`;
+  } else if (line.searched) {
+    html += `<div class="who">ตอนนี้ไม่มีร้านที่ออนไลน์ขายชิ้นนี้</div>`;
+  } else {
+    html += `<div class="who note">ดูร้านที่ขายถูกที่สุดในเทรดไซต์ตอนนี้</div>`;
+  }
+  html += `<button class="btn" data-act="refresh">${refreshLabel}</button></div>`;
+  if (ls.length > 1) {
+    html += `<div class="others">` + ls.slice(1).map((x, i) => `<div class="o"><span>${esc(x.seller)} — ${esc(priceText(x))}</span>${x.whisper ? `<button class="btn sm" data-copy="${i + 1}">คัดลอกข้อความซื้อ</button>` : ""}</div>`).join("") + `</div>`;
+  }
+  if (best) html += `<div class="shopmsg">"วาปไปร้าน" จะเปิดเทรดไซต์ทางการ เรียงราคาถูกสุดก่อน → กด <b>Travel to Hideout</b> ที่ร้านแรก (ต้องล็อกอินเว็บ pathofexile.com และเปิดเกมไว้) · ถ้าร้านขายไปแล้ว กด "รีเฟรช" เพื่อหาร้านใหม่</div>`;
+  html += `<div class="shopmsg" data-msg></div>`;
+  el.innerHTML = html;
+
+  const msg = el.querySelector("[data-msg]");
+  el.querySelector('[data-act="copy"]')?.addEventListener("click", (e) => copyText(best.whisper, e.currentTarget));
+  el.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => copyText(ls[+b.dataset.copy].whisper, b)));
+  el.querySelector('[data-act="refresh"]').addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; msg.textContent = "กำลังหาร้านที่ถูกที่สุด… (เทรดไซต์จำกัดความถี่ อาจรอสักครู่)";
+    let rr = r;
+    try {
+      await streamPost("/api/listings", { league: $("league").value, query: line.query }, (ev) => {
+        if (ev.type === "rates") rr = ev;
+        else if (ev.type === "status") msg.textContent = ev.msg;
+        else if (ev.type === "error") throw new Error(ev.msg);
+        else if (ev.type === "listings") {
+          line.listings = ev.listings; line.search_url = ev.search_url; line.searched = true;
+          if (!line.icon) {
+            line.icon = (ev.listings.find((x) => x.icon) || {}).icon || "";
+            if (el.id === "itemShop") setItemPic(line.icon);
+            else if (line.icon && typeof renderBuild === "function" && lines.includes(line)) { renderBuild(); return; }
+          }
+          line.checkedAt = new Date().toLocaleTimeString();
+        }
+      });
+      shopPanel(line, el, rr);
+    } catch (err) {
+      btn.disabled = false; msg.textContent = "ผิดพลาด: " + err.message;
+    }
+  });
+}
+
+/* ---------- tabs ---------- */
+function selectTab(name) {
+  document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t.dataset.tab === name)));
+  document.querySelectorAll(".pane").forEach((p) => (p.hidden = p.id !== "pane-" + name));
+  store.set("poe2tab", name);
+  if (name === "search") { loadCatalog(); $("q").focus(); }
+}
+document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => selectTab(t.dataset.tab)));
+
+/* ---------- leagues ---------- */
+const savedLeague = store.get("poe2league");
+fetch("/api/leagues").then((r) => r.json()).then((ls) => {
+  const sel = $("league");
+  if (!Array.isArray(ls) || !ls.length) throw 0;
+  sel.innerHTML = ls.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
+  if (savedLeague && ls.some((l) => l.id === savedLeague)) sel.value = savedLeague;
+}).catch(() => { $("league").innerHTML = '<option value="">ลีกปัจจุบัน</option>'; })
+  .finally(() => { if (!$("pane-search").hidden) loadCatalog(); });
+$("league").onchange = () => { store.set("poe2league", $("league").value); catalog = null; if (!$("pane-search").hidden) loadCatalog(); };
+
+/* ---------- search ---------- */
+const CAT_TH = {
+  Currency: "Currency", UncutGems: "Uncut Gem", LineageSupportGems: "Lineage Gem", Runes: "รูน", SoulCores: "Soul Core",
+  Idols: "Idol", Essences: "Essence", Abyss: "Abyss", Ritual: "Omen / Ritual", Delirium: "Delirium", Breach: "Breach",
+  UniqueWeapons: "ยูนีค: อาวุธ", UniqueArmours: "ยูนีค: เกราะ", UniqueAccessories: "ยูนีค: เครื่องประดับ",
+  UniqueFlasks: "ยูนีค: ขวดยา", UniqueCharms: "ยูนีค: Charm", UniqueJewels: "ยูนีค: Jewel",
+};
+let catalog = null, catalogLoading = false, catFilter = "", catRates = rates;
+
+async function loadCatalog() {
+  if (catalog || catalogLoading) return;
+  const league = $("league").value;
+  if ($("league").options[0]?.textContent === "กำลังโหลด…") return;
+  catalogLoading = true;
+  $("searchStatus").classList.add("on"); showErr($("searchErr"), "");
+  try {
+    const r = await fetch("/api/catalog?league=" + encodeURIComponent(league));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    catalog = d.items.map((it) => ({ ...it, key: (it.name + " " + (it.base || "")).toLowerCase() }));
+    catRates = d;
+    const cats = [...new Set(catalog.map((i) => i.category))];
+    $("chips").innerHTML = [`<button class="chip" data-c="" aria-pressed="${!catFilter}">ทั้งหมด</button>`]
+      .concat(cats.map((c) => `<button class="chip" data-c="${esc(c)}" aria-pressed="${catFilter === c}">${esc(CAT_TH[c] || c)}</button>`)).join("");
+    $("chips").querySelectorAll(".chip").forEach((b) => (b.onclick = () => {
+      catFilter = b.dataset.c;
+      $("chips").querySelectorAll(".chip").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      renderSearch();
+    }));
+    renderSearch();
+  } catch (e) {
+    showErr($("searchErr"), "โหลดรายการไม่ได้: " + e.message);
+  } finally {
+    catalogLoading = false; $("searchStatus").classList.remove("on");
+  }
+}
+
+function renderSearch() {
+  if (!catalog) return;
+  const words = $("q").value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const hits = catalog.filter((it) => (!catFilter || it.category === catFilter) && words.every((w) => it.key.includes(w)))
+    .sort((a, b) => {
+      const q = words.join(" ");
+      const sa = a.name.toLowerCase().startsWith(q) ? 1 : 0, sb = b.name.toLowerCase().startsWith(q) ? 1 : 0;
+      const la = a.listings != null && a.listings < 5 ? 0 : 1, lb = b.listings != null && b.listings < 5 ? 0 : 1;
+      return sb - sa || lb - la || b.value - a.value;
+    });
+  const shown = hits.slice(0, 80);
+  $("list").hidden = !shown.length;
+  $("list").innerHTML = shown.map((it) => {
+    const f = fmt(it.value, catRates);
+    const img = it.icon ? `<img src="${esc(it.icon)}" alt="" loading="lazy">` : `<div class="noimg"></div>`;
+    return `<div class="it${it.listings != null && it.listings < 5 ? " low" : ""}">${img}
+      <div><div class="nm">${esc(it.name)}</div><div class="cat">${esc(CAT_TH[it.category] || it.category)}${it.base ? " · " + esc(it.base) : ""}${it.listings != null ? ` · ขาย ${it.listings} รายการ` : ""}${it.listings != null && it.listings < 5 ? ` <span class="warn">ข้อมูลน้อย ราคาอาจไม่จริง</span>` : ""}</div></div>
+      <div class="pr">${esc(f[0])}${f[1] ? `<small>${esc(f[1])}</small>` : ""}</div></div>`;
+  }).join("");
+  $("count").textContent = catalog.length
+    ? `พบ ${hits.length.toLocaleString()} รายการ${hits.length > shown.length ? " (แสดง 80 อันดับแรก)" : ""} จากทั้งหมด ${catalog.length.toLocaleString()} · ไอเทม rare/magic ให้ใช้แท็บ "วางไอเทมจากเกม"`
+    : "";
+}
+let qTimer;
+$("q").oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(renderSearch, 80); };
+
+/* ---------- single item ---------- */
+$("itemText").value = store.get("poe2item") || "";
+$("itemGo").onclick = async () => {
+  const text = $("itemText").value.trim();
+  if (!text) { showErr($("itemErr"), "กรุณาวางข้อความไอเทมก่อน"); return; }
+  store.set("poe2item", text);
+  showErr($("itemErr"), ""); $("itemCard").style.display = "none"; $("itemShop").innerHTML = "";
+  $("itemGo").disabled = true; $("itemStatus").classList.add("on"); $("itemStatusText").textContent = "กำลังอ่านไอเทม…";
+  let r = rates;
+  try {
+    await streamPost("/api/item", { text, league: $("league").value, ratio: parseFloat($("itemRatio").value) || 0.8 }, (ev) => {
+      if (ev.type === "status") $("itemStatusText").textContent = ev.msg;
+      else if (ev.type === "rates") r = ev;
+      else if (ev.type === "error") showErr($("itemErr"), "ผิดพลาด: " + ev.msg);
+      else if (ev.type === "item") {
+        const rcls = "r-" + ev.rarity.toLowerCase();
+        $("itemHead").className = "itemhead " + rcls;
+        $("itemHead").innerHTML = `<div class="n">${esc(ev.name)}</div>${ev.base && ev.base !== ev.name ? `<div class="b">${esc(ev.base)}</div>` : ""}<div class="b">${esc(ev.slot)} · ${esc(ev.rarity.toLowerCase())} · ลีก ${esc(ev.league)}</div>`;
+        const mods = ["GEM", "CURRENCY"].includes(ev.rarity) ? [] : ev.mods;
+        $("itemMods").innerHTML = mods.map((m) => `<div class="${esc(m.kind)}">${esc(m.text)}</div>`).join("") + (ev.corrupted ? `<div class="corr">Corrupted</div>` : "");
+        $("itemMods").style.display = $("itemMods").innerHTML ? "block" : "none";
+        $("itemPrice").innerHTML = "";
+        $("itemCard").style.display = "block";
+      } else if (ev.type === "line") {
+        const f = fmt(ev.value, r);
+        const src = ev.source === "-" ? "" : `<span class="src ${ev.source === "trade" ? "trade" : "ninja"}">${esc(ev.source)}</span>`;
+        $("itemPrice").innerHTML = f
+          ? `<div><span class="v">${esc(f[0])}</span> <span class="v2">${esc(f[1] || "")}</span></div><div>${src} <span class="note">${esc(ev.note || "")}</span></div>`
+          : `<div class="v2">ไม่พบราคา</div><div class="note">${esc(ev.note || "")}</div>`;
+        setItemPic(ev.icon);
+        shopPanel(ev, $("itemShop"), r);
+      }
+    });
+  } catch (e) {
+    showErr($("itemErr"), "ผิดพลาด: " + e.message);
+  } finally {
+    $("itemGo").disabled = false; $("itemStatus").classList.remove("on");
+  }
+};
+
+/* ---------- build ---------- */
+let lines = [], ctrl = null;
+$("src").value = store.get("poe2src") || "";
+
+function renderBuild() {
+  const sorted = [...lines].sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
+  const max = Math.max(...lines.map((l) => l.value || 0), 1e-9);
+  $("rows").innerHTML = sorted.map((l) => {
+    const f = fmt(l.value);
+    const srcCls = l.source === "trade" ? "trade" : l.source === "poe.ninja" ? "ninja" : "";
+    const bar = l.value ? `<div class="bar" style="width:${Math.max(2, (l.value / max) * 100)}%"></div>` : "";
+    return `<tr>
+      <td class="slot">${esc(l.label)}</td>
+      <td><div class="namecell">${l.icon ? `<img class="thumb" src="${esc(l.icon)}" alt="" loading="lazy">` : `<span class="thumb none"></span>`}<div>${esc(l.detail)}${l.note ? `<div class="note">${esc(l.note)}</div>` : ""}${bar}</div></div></td>
+      <td><span class="src ${srcCls}">${esc(l.source === "-" ? "—" : l.source)}</span></td>
+      <td class="price ${f ? "" : "none"}">${f ? esc(f[0]) + (f[1] ? `<div class="note">${esc(f[1])}</div>` : "") : "?"}</td>
+      <td>${l.query ? `<button class="btn sm" data-shop="${l.idx}">${l.open ? "ซ่อน" : "ร้าน"}</button>` : ""}</td>
+    </tr>${l.open ? `<tr class="shoprow"><td colspan="5"><div class="shop" id="shop-${l.idx}"></div></td></tr>` : ""}`;
+  }).join("");
+  sorted.filter((l) => l.open).forEach((l) => shopPanel(l, $("shop-" + l.idx), rates));
+  $("rows").querySelectorAll("[data-shop]").forEach((b) => (b.onclick = () => {
+    const l = lines[+b.dataset.shop];
+    l.open = !l.open;
+    renderBuild();
+  }));
+  const priced = lines.filter((l) => l.value != null);
+  const t = (priced.length && fmt(priced.reduce((s, l) => s + l.value, 0))) || ["–"];
+  $("tDiv").textContent = t[0];
+  $("tEx").textContent = t[1] || "";
+  $("tCount").textContent = priced.length;
+  $("tMissing").textContent = lines.length - priced.length;
+}
+
+$("stop").onclick = () => ctrl && ctrl.abort();
+$("go").onclick = async () => {
+  const source = $("src").value.trim();
+  if (!source) { showErr($("err"), "กรุณาวาง PoB code หรือลิงก์ก่อน"); return; }
+  store.set("poe2src", source);
+  showErr($("err"), ""); lines = []; renderBuild();
+  $("result").style.display = "none";
+  $("go").disabled = true; $("status").classList.add("on"); $("statusText").textContent = "กำลังเริ่ม…";
+  ctrl = new AbortController();
+  try {
+    await streamPost("/api/price", { source, league: $("league").value, no_rares: !$("rares").checked, ratio: parseFloat($("ratio").value) || 0.8 }, (ev) => {
+      if (ev.type === "status") $("statusText").textContent = ev.msg;
+      else if (ev.type === "build") {
+        $("meta").textContent = `บิว ${ev.title} · ลีก ${ev.league} · ไอเทม ${ev.items} ชิ้น · เจม ${ev.gems} เม็ด`;
+        $("result").style.display = "block";
+      } else if (ev.type === "rates") { rates = ev; renderBuild(); }
+      else if (ev.type === "line") { ev.idx = lines.length; lines.push(ev); renderBuild(); }
+      else if (ev.type === "error") showErr($("err"), "ผิดพลาด: " + ev.msg);
+      else if (ev.type === "warn") showErr($("err"), "⚠ " + ev.msg);
+    }, ctrl.signal);
+  } catch (e) {
+    if (e.name !== "AbortError") showErr($("err"), "ผิดพลาด: " + e.message);
+  } finally {
+    $("go").disabled = false; $("status").classList.remove("on"); ctrl = null;
+  }
+};
+
+selectTab(store.get("poe2tab") || "search");
+</script>
+</body>
+</html>
