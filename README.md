@@ -2,7 +2,23 @@
 
 เช็คราคาไอเทมและบิว Path of Exile 2 ด้วยราคาสดจาก poe.ninja และเทรดไซต์ทางการ ผ่านหน้าเว็บที่รันบนเครื่องของคุณเอง
 
-## เริ่มใช้งาน (Windows)
+## ใช้บน GitHub เลย ไม่ต้องติดตั้ง (Codespaces)
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/zTHEYUTz/poe2-price-checker?quickstart=1)
+
+1. ล็อกอิน GitHub แล้วกดปุ่มด้านบน → **Create codespace**
+2. รอ 1–2 นาที (ครั้งแรกจะติดตั้งให้เอง) หน้าเว็บของโปรแกรมจะเปิดในแท็บใหม่
+   - ถ้าไม่เปิดเอง: ไปแท็บ **PORTS** ด้านล่าง → คลิกรูปลูกโลกที่พอร์ต **8765**
+3. ใช้เสร็จแล้วปิดได้เลย Codespace จะหยุดเองเมื่อไม่ได้ใช้ (~30 นาที)
+   เปิดใหม่ได้ที่ https://github.com/codespaces
+
+ข้อควรรู้
+- บัญชี GitHub ฟรีใช้ Codespaces ได้ราว 60 ชั่วโมง/เดือน (คิดจากโควตาของคนที่เปิด)
+- พอร์ตเป็น **Private** ตามค่าเริ่มต้น (เห็นแค่เจ้าของ) — อย่าเปลี่ยนเป็น Public
+- Codespaces ใช้ IP ของ cloud เทรดไซต์ของ GGG อาจบล็อกบางครั้ง ถ้าเป็นแบบนั้น
+  ราคา rare / หาร้าน จะใช้ไม่ได้ แต่ราคาจาก poe.ninja ยังใช้ได้ปกติ → ใช้ `start.bat` บนเครื่องตัวเองแทน
+
+## เริ่มใช้งานบนเครื่องตัวเอง (Windows)
 
 1. ติดตั้ง **Python 3.10 ขึ้นไป** จาก https://www.python.org/downloads/
    ตอนติดตั้ง **ติ๊ก "Add python.exe to PATH"** (ทำครั้งเดียว)

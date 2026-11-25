@@ -1,0 +1,26 @@
+{
+  "name": "POE2 Price Checker",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "containerEnv": {
+    "PYTHONUTF8": "1"
+  },
+  "postCreateCommand": "pip install --user --disable-pip-version-check -q -r requirements.txt pytest",
+  "postAttachCommand": {
+    "app": "python web.py"
+  },
+  "forwardPorts": [8765],
+  "portsAttributes": {
+    "8765": {
+      "label": "POE2 Price Checker",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    },
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}
