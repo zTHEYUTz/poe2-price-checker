@@ -2,6 +2,13 @@
 
 เช็คราคาไอเทมและบิว Path of Exile 2 ด้วยราคาสดจาก poe.ninja และเทรดไซต์ทางการ ผ่านหน้าเว็บที่รันบนเครื่องของคุณเอง
 
+## ดูราคาออนไลน์ทันที (เว็บ)
+
+**https://ztheyutz.github.io/poe2-price-checker/**
+
+ค้นราคาไอเทมทุกตัวที่ poe.ninja มี ไม่ต้องล็อกอิน ไม่ต้องติดตั้ง (อัปเดตทุกชั่วโมงโดย GitHub Actions)
+เวอร์ชันเว็บนี้มีแค่แท็บค้นหาไอเทม — ถ้าจะวางไอเทมจากเกม เช็คทั้งบิว หรือหาร้าน ใช้ Codespaces หรือติดตั้งบนเครื่องตามด้านล่าง
+
 ## ใช้บน GitHub เลย ไม่ต้องติดตั้ง (Codespaces)
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/zTHEYUTz/poe2-price-checker?quickstart=1)

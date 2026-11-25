@@ -6,3 +6,4 @@ __pycache__/
 # exported results may contain your own build data
 result*.json
 .env
+_site/
