@@ -61,3 +61,9 @@ python poe2_price.py "<PoB code>" --no-rares      # เร็ว: ไม่ค�
 pip install -r requirements.txt pytest
 python -m pytest
 ```
+
+## License
+[MIT](LICENSE) — นำไปใช้ แก้ไข และแจกต่อได้ฟรี โดยต้องคงข้อความลิขสิทธิ์ไว้
+
+โปรเจกต์นี้ไม่ได้เกี่ยวข้องหรือได้รับการรับรองจาก Grinding Gear Games
+Path of Exile เป็นเครื่องหมายการค้าของ Grinding Gear Games
