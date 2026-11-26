@@ -218,6 +218,7 @@
   .hchart .area { fill: var(--gold); opacity: .08; }
   .hchart circle { fill: var(--panel); stroke: var(--gold); stroke-width: 2; }
   .hchart circle:hover { fill: var(--gold); }
+  .hchart circle.bad { stroke: #e6c27a; stroke-dasharray: 2 2; fill: var(--bg); }
   .hstats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); margin: 8px 0; }
   .hstats b { color: var(--text); font-weight: 500; }
   .htable { width: 100%; min-width: 0; font-size: 13px; background: none; }
@@ -779,6 +780,9 @@ function renderBuild() {
 /* ---------- saved builds ---------- */
 let savedBuilds = [];
 const buildTotal = () => lines.reduce((s, l) => s + (l.value ?? 0), 0);
+const checkInfo = () => ({ total: buildTotal(), div: rates.div, ex: rates.ex, checked: true,
+  missing: lines.filter((l) => l.value == null).length, count: lines.length,
+  rares: !!lastBuild?.rares, blocked: !!lastBuild?.blocked });
 async function apiPost(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const d = await r.json();
@@ -794,59 +798,97 @@ const histDiv = (h) => h.total / (h.div || 1);  // totals are stored in poe.ninj
 const fmtWhen = (t) => new Date(t * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
 let openHist = new Set();
 
-function histChange(hist) {
-  if (!hist || hist.length < 2) return "";
-  const a = histDiv(hist[hist.length - 2]), b = histDiv(hist[hist.length - 1]);
-  if (!a) return "";
-  const pct = ((b - a) / a) * 100;
-  // reuse the trend style: spark of all checks + change since the previous check
-  const first = histDiv(hist[0]) || 1;
-  return trendHtml({ change: pct, spark: hist.map((h) => ((histDiv(h) - first) / first) * 100) })
-    .replace(/title="[^"]*"/, `title="เทียบกับครั้งก่อน (${fmtWhen(hist[hist.length - 2].t)}) · กราฟ = ทุกครั้งที่เช็ค"`);
+/* A check is "incomplete" when it priced fewer items than this build usually gets
+   (trade site blocked, rare search off, ...). Some items never have a price (e.g. a
+   gem poe.ninja doesn't list), so we compare with the build's best check, not with 0. */
+function histFlags(hist) {
+  const known = hist.filter((h) => Number.isInteger(h.missing));
+  const best = known.length ? Math.min(...known.map((h) => h.missing)) : 0;
+  return hist.map((h) => {
+    const extra = Number.isInteger(h.missing) ? h.missing - best : 0;
+    const bad = extra > 0 || h.blocked === true;
+    let why = "";
+    if (bad) {
+      const r = [];
+      if (h.blocked) r.push("เทรดไซต์จำกัดการค้น");
+      if (h.rares === false) r.push("ปิดการค้น rare");
+      if (extra > 0) r.push(`ขาดราคา ${extra} ชิ้นที่ปกติมีราคา`);
+      why = r.join(" · ");
+    }
+    return { bad, why };
+  });
 }
 
-function histChart(hist, rr) {
+function histChange(hist) {
+  if (!hist || hist.length < 2) return "";
+  const flags = histFlags(hist);
+  const ok = hist.filter((_, i) => !flags[i].bad);
+  const lastBad = flags[flags.length - 1].bad;
+  const warn = lastBad ? `<div class="sub2" style="color:#e6c27a" title="${esc(flags[flags.length - 1].why)}">⚠ ครั้งล่าสุดเช็คไม่ครบ</div>` : "";
+  if (ok.length < 2) return warn;
+  const a = histDiv(ok[ok.length - 2]), b = histDiv(ok[ok.length - 1]);
+  if (!a) return warn;
+  const first = histDiv(ok[0]) || 1;
+  return trendHtml({ change: ((b - a) / a) * 100, spark: ok.map((h) => ((histDiv(h) - first) / first) * 100) })
+    .replace(/title="[^"]*"/, `title="เทียบระหว่าง 2 ครั้งล่าสุดที่เช็คครบ · ไม่นับครั้งที่ไม่ครบ"`) + warn;
+}
+
+function histChart(hist, flags, rr) {
   const W = 600, H = 170, L = 8, R = 8, T = 14, B = 22;
   const vals = hist.map(histDiv);
   let lo = Math.min(...vals), hi = Math.max(...vals);
   if (hi - lo < hi * 0.02) { lo = lo * 0.97; hi = hi * 1.03 || 1; }  // flat line: give it some room
   const x = (i) => L + (hist.length === 1 ? (W - L - R) / 2 : (i / (hist.length - 1)) * (W - L - R));
   const y = (v) => T + (1 - (v - lo) / (hi - lo || 1)) * (H - T - B);
-  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const okIdx = hist.map((_, i) => i).filter((i) => !flags[i].bad);
+  const pts = okIdx.map((i) => `${x(i).toFixed(1)},${y(vals[i]).toFixed(1)}`).join(" ");
   const fmtV = (v) => fmt(v, rr)[0];
-  const dots = hist.map((h, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(vals[i]).toFixed(1)}" r="${hist.length > 40 ? 2 : 3.5}">` +
-    `<title>${esc(fmtWhen(h.t))} — ${esc(fmt(h.total, { div: h.div, ex: h.ex, primary: "div" }).join(" / "))}</title></circle>`).join("");
-  const area = hist.length > 1 ? `<polygon class="area" points="${x(0)},${H - B} ${pts} ${x(hist.length - 1)},${H - B}"/>` : "";
+  const dots = hist.map((h, i) => `<circle class="${flags[i].bad ? "bad" : ""}" cx="${x(i).toFixed(1)}" cy="${y(vals[i]).toFixed(1)}" r="${hist.length > 40 ? 2 : 3.5}">` +
+    `<title>${esc(fmtWhen(h.t))} — ${esc(fmt(h.total, { div: h.div, ex: h.ex, primary: "div" }).join(" / "))}${flags[i].bad ? ` (ไม่ครบ: ${esc(flags[i].why)})` : ""}</title></circle>`).join("");
+  const area = okIdx.length > 1 ? `<polygon class="area" points="${x(okIdx[0])},${H - B} ${pts} ${x(okIdx[okIdx.length - 1])},${H - B}"/>` : "";
   return `<svg class="hchart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="กราฟประวัติราคาบิว">
     <line class="grid" x1="${L}" x2="${W - R}" y1="${y(hi)}" y2="${y(hi)}"/><line class="grid" x1="${L}" x2="${W - R}" y1="${y(lo)}" y2="${y(lo)}"/>
     <text class="lbl" x="${L}" y="${y(hi) - 3}">${esc(fmtV(hi))}</text>
     <text class="lbl" x="${L}" y="${y(lo) - 4}">${esc(fmtV(lo))}</text>
     <text class="lbl" x="${L}" y="${H - 4}">${esc(fmtWhen(hist[0].t))}</text>
     <text class="lbl" x="${W - R}" y="${H - 4}" text-anchor="end">${esc(fmtWhen(hist[hist.length - 1].t))}</text>
-    ${area}<polyline points="${pts}"/>${dots}</svg>`;
+    ${area}${okIdx.length > 1 ? `<polyline points="${pts}"/>` : ""}${dots}</svg>`;
 }
 
 function histPanel(b) {
   const hist = b.history || [];
   if (!hist.length) return `<div class="note">ยังไม่มีประวัติ — กด "เช็คราคาอีกครั้ง" เพื่อเริ่มเก็บ</div>`;
-  const rr = { div: 1, ex: hist[hist.length - 1].ex && hist[hist.length - 1].div ? hist[hist.length - 1].ex / hist[hist.length - 1].div : null, primary: "div" };
-  const vals = hist.map(histDiv);
+  const flags = histFlags(hist);
+  const lastH = hist[hist.length - 1];
+  const rr = { div: 1, ex: lastH.ex && lastH.div ? lastH.ex / lastH.div : null, primary: "div" };
+  const ok = hist.filter((_, i) => !flags[i].bad);
+  const nBad = hist.length - ok.length;
+  const vals = (ok.length ? ok : hist).map(histDiv);
   const lo = Math.min(...vals), hi = Math.max(...vals);
-  const first = vals[0], last = vals[vals.length - 1];
-  const total = first ? ((last - first) / first) * 100 : 0;
+  const total = vals[0] ? ((vals[vals.length - 1] - vals[0]) / vals[0]) * 100 : 0;
+  let prevOk = null;
   const rows = hist.map((h, i) => {
-    const prev = i ? histDiv(hist[i - 1]) : null, cur = histDiv(h);
-    const d = prev ? ((cur - prev) / prev) * 100 : null;
+    const cur = histDiv(h);
     const f = fmt(h.total, { div: h.div, ex: h.ex, primary: "div" });
-    return `<tr><td>${esc(fmtWhen(h.t))}</td><td>${esc(f[0])}</td><td class="note">${esc(f[1] || "")}</td>
-      <td class="${d == null ? "" : d > 0.5 ? "up" : d < -0.5 ? "down" : ""}">${d == null ? "—" : (d > 0 ? "+" : "") + d.toFixed(1) + "%"}</td></tr>`;
+    let cell;
+    if (flags[i].bad) {
+      cell = `<td><span class="tier suffix" style="background:#3a2a10;color:#e6c27a;border-color:#6b5020" title="${esc(flags[i].why)}">ไม่ครบ</span><div class="note">${esc(flags[i].why)}</div></td>`;
+    } else {
+      const d = prevOk ? ((cur - prevOk) / prevOk) * 100 : null;
+      cell = `<td class="${d == null ? "" : d > 0.5 ? "up" : d < -0.5 ? "down" : ""}">${d == null ? "—" : (d > 0 ? "+" : "") + d.toFixed(1) + "%"}</td>`;
+      prevOk = cur;
+    }
+    const cnt = Number.isInteger(h.count) ? `<div class="note">มีราคา ${h.count - (h.missing || 0)}/${h.count} ชิ้น</div>` : "";
+    return `<tr${flags[i].bad ? ' style="opacity:.8"' : ""}><td>${esc(fmtWhen(h.t))}</td><td>${esc(f[0])}${cnt}</td><td class="note">${esc(f[1] || "")}</td>${cell}</tr>`;
   }).reverse().join("");
-  return histChart(hist, rr) +
-    `<div class="hstats"><span>เช็คทั้งหมด <b>${hist.length}</b> ครั้ง</span>
+  const colour = total > 0.5 ? "var(--ok)" : total < -0.5 ? "var(--bad)" : "inherit";
+  return histChart(hist, flags, rr) +
+    `<div class="hstats"><span>เช็คทั้งหมด <b>${hist.length}</b> ครั้ง${nBad ? ` (ไม่ครบ <b style="color:#e6c27a">${nBad}</b>)` : ""}</span>
       <span>ต่ำสุด <b>${esc(fmt(lo, rr)[0])}</b></span><span>สูงสุด <b>${esc(fmt(hi, rr)[0])}</b></span>
-      <span>ตั้งแต่ครั้งแรก <b class="${total > 0.5 ? "up" : total < -0.5 ? "down" : ""}" style="color:${total > 0.5 ? "var(--ok)" : total < -0.5 ? "var(--bad)" : "inherit"}">${total > 0 ? "+" : ""}${total.toFixed(1)}%</b></span></div>
+      <span>ตั้งแต่ครั้งแรก <b style="color:${colour}">${total > 0 ? "+" : ""}${total.toFixed(1)}%</b></span></div>
     <div class="tablewrap"><table class="htable"><thead><tr><th>วันที่เช็ค</th><th>ราคารวม</th><th></th><th>เทียบครั้งก่อน</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="note" style="margin-top:6px">ราคาเป็นค่าประมาณ ณ เวลาที่เช็ค ถ้าครั้งไหนเทรดไซต์ถูกจำกัด ไอเทม rare จะไม่มีราคา ยอดรวมครั้งนั้นจึงต่ำกว่าจริง</div>`;
+    <div class="note" style="margin-top:6px">ครั้งที่ <b>ไม่ครบ</b> = มีราคาน้อยชิ้นกว่าครั้งที่ดีที่สุดของบิวนี้ (เช่น เทรดไซต์จำกัด หรือปิดการค้น rare) — แสดงเป็นจุดกลวงในกราฟ
+      และไม่เอาไปคิด % ต่ำสุด/สูงสุด · ราคาเป็นค่าประมาณ ณ เวลาที่เช็ค</div>`;
 }
 
 function renderSaved() {
@@ -906,7 +948,7 @@ async function afterBuildCheck() {
   if (existing) {
     // already saved: just refresh its last price
     await apiPost("/api/builds/save", { id: existing.id, source: existing.source, title: lastBuild.title, league: lastBuild.league,
-      total: buildTotal(), div: rates.div, ex: rates.ex, checked: true }).catch(() => {});
+      ...checkInfo() }).catch(() => {});
     $("saveName").value = existing.name || "";
     $("saveBtn").textContent = "💾 บันทึกชื่อใหม่";
     $("saveMsg").textContent = "บิวนี้บันทึกไว้แล้ว — อัปเดตราคาล่าสุดให้แล้ว";
@@ -921,7 +963,7 @@ $("saveBtn").onclick = async () => {
   $("saveBtn").disabled = true;
   try {
     await apiPost("/api/builds/save", { source: lastBuild.source, name: $("saveName").value.trim() || lastBuild.title,
-      title: lastBuild.title, league: lastBuild.league, total: buildTotal(), div: rates.div, ex: rates.ex, checked: true });
+      title: lastBuild.title, league: lastBuild.league, ...checkInfo() });
     $("saveMsg").textContent = "บันทึกแล้ว ✓ ดูได้ในแท็บ \"บิวที่บันทึก\"";
     $("saveBtn").textContent = "💾 บันทึกชื่อใหม่";
   } catch (e) {
@@ -937,7 +979,7 @@ $("go").onclick = async () => {
   if (!source) { showErr($("err"), "กรุณาวาง PoB code หรือลิงก์ก่อน"); return; }
   store.set("poe2src", source);
   showErr($("err"), ""); lines = []; renderBuild();
-  lastBuild = { source, league: $("league").value, title: "" }; $("savebar").hidden = true;
+  lastBuild = { source, league: $("league").value, title: "", rares: $("rares").checked, blocked: false }; $("savebar").hidden = true;
   $("result").style.display = "none";
   $("go").disabled = true; $("status").classList.add("on"); $("statusText").textContent = "กำลังเริ่ม…";
   ctrl = new AbortController();
@@ -951,7 +993,7 @@ $("go").onclick = async () => {
       } else if (ev.type === "rates") { rates = ev; renderBuild(); }
       else if (ev.type === "line") { ev.idx = lines.length; lines.push(ev); renderBuild(); }
       else if (ev.type === "error") showErr($("err"), "ผิดพลาด: " + ev.msg);
-      else if (ev.type === "warn") showErr($("err"), "⚠ " + ev.msg);
+      else if (ev.type === "warn") { showErr($("err"), "⚠ " + ev.msg); if (lastBuild) lastBuild.blocked = true; }
       else if (ev.type === "done") afterBuildCheck();
     }, ctrl.signal);
   } catch (e) {

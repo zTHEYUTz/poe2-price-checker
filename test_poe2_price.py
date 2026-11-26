@@ -354,3 +354,17 @@ def test_build_store_history(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert hist[-1]["div"] == 1.0 and hist[0]["t"] <= hist[-1]["t"]
     store.upsert({"source": "C", "name": "renamed"})  # rename keeps history
     assert len(store.all()[0]["history"]) == 3
+
+
+def test_build_store_history_completeness(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import web
+    store = web.BuildStore(tmp_path / "builds.json")
+    store.upsert({"source": "C", "total": 10.0, "checked": True, "missing": 2, "count": 28,
+                  "rares": True, "blocked": False})
+    store.upsert({"source": "C", "total": 4.0, "checked": True, "missing": 9, "count": 28,
+                  "rares": True, "blocked": True})
+    store.upsert({"source": "C", "total": 5.0, "checked": True, "missing": "x", "count": True})
+    h = store.all()[0]["history"]
+    assert (h[0]["missing"], h[0]["count"], h[0]["blocked"]) == (2, 28, False)
+    assert (h[1]["missing"], h[1]["blocked"]) == (9, True)
+    assert "missing" not in h[2] and "count" not in h[2]  # bad types are ignored

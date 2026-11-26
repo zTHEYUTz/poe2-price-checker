@@ -81,8 +81,16 @@ class BuildStore:
                 if isinstance(data.get("total"), (int, float)):
                     # one point per price check, newest last
                     hist = cur.setdefault("history", [])
-                    hist.append({"t": cur["checked"], "total": float(data["total"]),
-                                 "div": cur.get("div"), "ex": cur.get("ex")})
+                    point: dict[str, Any] = {"t": cur["checked"], "total": float(data["total"]),
+                                             "div": cur.get("div"), "ex": cur.get("ex")}
+                    # how complete this check was: items without a price, items in total, notes
+                    for key in ("missing", "count"):
+                        if isinstance(data.get(key), int) and not isinstance(data.get(key), bool):
+                            point[key] = max(0, int(data[key]))
+                    for key in ("rares", "blocked"):
+                        if isinstance(data.get(key), bool):
+                            point[key] = data[key]
+                    hist.append(point)
                     del hist[:-self.MAX_HISTORY]
             cur["source"] = source
             self._save(builds)
