@@ -208,6 +208,22 @@
   .sv .tot { text-align: right; min-width: 120px; }
   .sv .tot b { color: var(--gold); font-size: 18px; }
   .sv .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .sv .tot .trend { justify-content: flex-end; display: flex; margin-top: 2px; }
+  .hist { flex: 1 0 100%; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 2px; }
+  .hist[hidden] { display: none; }
+  .hchart { width: 100%; height: 170px; display: block; }
+  .hchart .grid { stroke: var(--line); stroke-width: 1; }
+  .hchart .lbl { fill: var(--muted); font-size: 11px; font-family: inherit; }
+  .hchart polyline { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linejoin: round; }
+  .hchart .area { fill: var(--gold); opacity: .08; }
+  .hchart circle { fill: var(--panel); stroke: var(--gold); stroke-width: 2; }
+  .hchart circle:hover { fill: var(--gold); }
+  .hstats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); margin: 8px 0; }
+  .hstats b { color: var(--text); font-weight: 500; }
+  .htable { width: 100%; min-width: 0; font-size: 13px; background: none; }
+  .htable td, .htable th { padding: 5px 8px; }
+  .htable td:nth-child(n+2), .htable th:nth-child(n+2) { text-align: right; }
+  .htable .up { color: var(--ok); } .htable .down { color: var(--bad); }
   .savebar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; }
   .savebar input { flex: 1 1 220px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
   .empty { color: var(--muted); text-align: center; padding: 28px 16px; border: 1px dashed var(--line); border-radius: 10px; }
@@ -773,6 +789,66 @@ async function loadSaved() {
   try { savedBuilds = await (await fetch("/api/builds")).json(); } catch { savedBuilds = []; }
   renderSaved();
 }
+/* ---------- saved-build price history ---------- */
+const histDiv = (h) => h.total / (h.div || 1);  // totals are stored in poe.ninja's primary currency
+const fmtWhen = (t) => new Date(t * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+let openHist = new Set();
+
+function histChange(hist) {
+  if (!hist || hist.length < 2) return "";
+  const a = histDiv(hist[hist.length - 2]), b = histDiv(hist[hist.length - 1]);
+  if (!a) return "";
+  const pct = ((b - a) / a) * 100;
+  // reuse the trend style: spark of all checks + change since the previous check
+  const first = histDiv(hist[0]) || 1;
+  return trendHtml({ change: pct, spark: hist.map((h) => ((histDiv(h) - first) / first) * 100) })
+    .replace(/title="[^"]*"/, `title="เทียบกับครั้งก่อน (${fmtWhen(hist[hist.length - 2].t)}) · กราฟ = ทุกครั้งที่เช็ค"`);
+}
+
+function histChart(hist, rr) {
+  const W = 600, H = 170, L = 8, R = 8, T = 14, B = 22;
+  const vals = hist.map(histDiv);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < hi * 0.02) { lo = lo * 0.97; hi = hi * 1.03 || 1; }  // flat line: give it some room
+  const x = (i) => L + (hist.length === 1 ? (W - L - R) / 2 : (i / (hist.length - 1)) * (W - L - R));
+  const y = (v) => T + (1 - (v - lo) / (hi - lo || 1)) * (H - T - B);
+  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const fmtV = (v) => fmt(v, rr)[0];
+  const dots = hist.map((h, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(vals[i]).toFixed(1)}" r="${hist.length > 40 ? 2 : 3.5}">` +
+    `<title>${esc(fmtWhen(h.t))} — ${esc(fmt(h.total, { div: h.div, ex: h.ex, primary: "div" }).join(" / "))}</title></circle>`).join("");
+  const area = hist.length > 1 ? `<polygon class="area" points="${x(0)},${H - B} ${pts} ${x(hist.length - 1)},${H - B}"/>` : "";
+  return `<svg class="hchart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="กราฟประวัติราคาบิว">
+    <line class="grid" x1="${L}" x2="${W - R}" y1="${y(hi)}" y2="${y(hi)}"/><line class="grid" x1="${L}" x2="${W - R}" y1="${y(lo)}" y2="${y(lo)}"/>
+    <text class="lbl" x="${L}" y="${y(hi) - 3}">${esc(fmtV(hi))}</text>
+    <text class="lbl" x="${L}" y="${y(lo) - 4}">${esc(fmtV(lo))}</text>
+    <text class="lbl" x="${L}" y="${H - 4}">${esc(fmtWhen(hist[0].t))}</text>
+    <text class="lbl" x="${W - R}" y="${H - 4}" text-anchor="end">${esc(fmtWhen(hist[hist.length - 1].t))}</text>
+    ${area}<polyline points="${pts}"/>${dots}</svg>`;
+}
+
+function histPanel(b) {
+  const hist = b.history || [];
+  if (!hist.length) return `<div class="note">ยังไม่มีประวัติ — กด "เช็คราคาอีกครั้ง" เพื่อเริ่มเก็บ</div>`;
+  const rr = { div: 1, ex: hist[hist.length - 1].ex && hist[hist.length - 1].div ? hist[hist.length - 1].ex / hist[hist.length - 1].div : null, primary: "div" };
+  const vals = hist.map(histDiv);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const first = vals[0], last = vals[vals.length - 1];
+  const total = first ? ((last - first) / first) * 100 : 0;
+  const rows = hist.map((h, i) => {
+    const prev = i ? histDiv(hist[i - 1]) : null, cur = histDiv(h);
+    const d = prev ? ((cur - prev) / prev) * 100 : null;
+    const f = fmt(h.total, { div: h.div, ex: h.ex, primary: "div" });
+    return `<tr><td>${esc(fmtWhen(h.t))}</td><td>${esc(f[0])}</td><td class="note">${esc(f[1] || "")}</td>
+      <td class="${d == null ? "" : d > 0.5 ? "up" : d < -0.5 ? "down" : ""}">${d == null ? "—" : (d > 0 ? "+" : "") + d.toFixed(1) + "%"}</td></tr>`;
+  }).reverse().join("");
+  return histChart(hist, rr) +
+    `<div class="hstats"><span>เช็คทั้งหมด <b>${hist.length}</b> ครั้ง</span>
+      <span>ต่ำสุด <b>${esc(fmt(lo, rr)[0])}</b></span><span>สูงสุด <b>${esc(fmt(hi, rr)[0])}</b></span>
+      <span>ตั้งแต่ครั้งแรก <b class="${total > 0.5 ? "up" : total < -0.5 ? "down" : ""}" style="color:${total > 0.5 ? "var(--ok)" : total < -0.5 ? "var(--bad)" : "inherit"}">${total > 0 ? "+" : ""}${total.toFixed(1)}%</b></span></div>
+    <div class="tablewrap"><table class="htable"><thead><tr><th>วันที่เช็ค</th><th>ราคารวม</th><th></th><th>เทียบครั้งก่อน</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="note" style="margin-top:6px">ราคาเป็นค่าประมาณ ณ เวลาที่เช็ค ถ้าครั้งไหนเทรดไซต์ถูกจำกัด ไอเทม rare จะไม่มีราคา ยอดรวมครั้งนั้นจึงต่ำกว่าจริง</div>`;
+}
+
 function renderSaved() {
   const el = $("savedList");
   if (!savedBuilds.length) {
@@ -786,14 +862,21 @@ function renderSaved() {
       <div class="info"><div class="nm">${esc(b.name || b.title || "บิวไม่มีชื่อ")}</div>
         <div class="sub2">${esc([b.title, b.league].filter(Boolean).join(" · "))}</div>
         ${when ? `<div class="sub2">เช็คล่าสุด ${esc(when)}</div>` : ""}</div>
-      <div class="tot">${f ? `<b>${esc(f[0])}</b><div class="sub2">${esc(f[1] || "")}</div>` : `<span class="sub2">ยังไม่มีราคา</span>`}</div>
+      <div class="tot">${f ? `<b>${esc(f[0])}</b><div class="sub2">${esc(f[1] || "")}</div>${histChange(b.history)}` : `<span class="sub2">ยังไม่มีราคา</span>`}</div>
       <div class="acts">
         <button class="btn warp" data-run="${esc(b.id)}">เช็คราคาอีกครั้ง</button>
+        <button class="btn" data-hist="${esc(b.id)}">${openHist.has(b.id) ? "ซ่อนประวัติ" : `ประวัติราคา (${(b.history || []).length})`}</button>
         <button class="btn" data-ren="${esc(b.id)}">เปลี่ยนชื่อ</button>
         <button class="btn" data-del="${esc(b.id)}">ลบ</button>
-      </div></div>`;
+      </div>
+      <div class="hist" ${openHist.has(b.id) ? "" : "hidden"}>${openHist.has(b.id) ? histPanel(b) : ""}</div></div>`;
   }).join("");
   const find = (id) => savedBuilds.find((b) => b.id === id);
+  el.querySelectorAll("[data-hist]").forEach((btn) => (btn.onclick = () => {
+    const id = btn.dataset.hist;
+    openHist.has(id) ? openHist.delete(id) : openHist.add(id);
+    renderSaved();
+  }));
   el.querySelectorAll("[data-run]").forEach((btn) => (btn.onclick = () => {
     const b = find(btn.dataset.run);
     selectTab("build");

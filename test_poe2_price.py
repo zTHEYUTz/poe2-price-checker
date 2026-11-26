@@ -339,3 +339,18 @@ def test_mark_matches() -> None:
     flags = [m.get("match") for m in listing["item"]["mods"]]
     assert flags == [True, True, False, None]  # rune mods are not compared
     assert (listing["matched"], listing["wanted"]) == (2, 3)
+
+
+def test_build_store_history(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import web
+    store = web.BuildStore(tmp_path / "builds.json")
+    store.MAX_HISTORY = 3
+    store.upsert({"source": "C", "name": "x"})  # saving without a check adds no point
+    assert "history" not in store.all()[0]
+    for total in (10.0, 12.0, 11.0, 15.0):
+        store.upsert({"source": "C", "total": total, "div": 1.0, "ex": 0.0025, "checked": True})
+    hist = store.all()[0]["history"]
+    assert [h["total"] for h in hist] == [12.0, 11.0, 15.0]  # capped, newest last
+    assert hist[-1]["div"] == 1.0 and hist[0]["t"] <= hist[-1]["t"]
+    store.upsert({"source": "C", "name": "renamed"})  # rename keeps history
+    assert len(store.all()[0]["history"]) == 3

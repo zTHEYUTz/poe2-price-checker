@@ -33,6 +33,7 @@ class BuildStore:
 
     MAX_BUILDS = 300
     MAX_SOURCE = 500_000
+    MAX_HISTORY = 200
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -77,6 +78,12 @@ class BuildStore:
                     cur[key] = float(data[key])
             if data.get("checked"):
                 cur["checked"] = time.time()
+                if isinstance(data.get("total"), (int, float)):
+                    # one point per price check, newest last
+                    hist = cur.setdefault("history", [])
+                    hist.append({"t": cur["checked"], "total": float(data["total"]),
+                                 "div": cur.get("div"), "ex": cur.get("ex")})
+                    del hist[:-self.MAX_HISTORY]
             cur["source"] = source
             self._save(builds)
             return cur
