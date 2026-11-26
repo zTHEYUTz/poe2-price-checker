@@ -9,3 +9,4 @@ result*.json
 _site/
 saved_builds.json
 saved_builds.tmp
+tree_cache/

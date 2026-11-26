@@ -107,6 +107,36 @@ class BuildStore:
 
 
 BUILDS = BuildStore(BUILDS_FILE)
+
+# Passive tree data comes from Path of Building 2 (MIT), downloaded on first use.
+TREE_URL = "https://raw.githubusercontent.com/PathOfBuildingCommunity/PathOfBuilding-PoE2/dev/src/TreeData/{v}/tree.json"
+TREE_DIR = Path(__file__).with_name("tree_cache")
+DEFAULT_TREE = "0_5"
+_trees: dict[str, dict[str, Any]] = {}
+_tree_lock = threading.Lock()
+
+
+async def get_tree(version: str) -> dict[str, Any]:
+    """Compact passive tree for a PoB tree version, e.g. "0_5" (cached on disk and in memory)."""
+    if not re.fullmatch(r"\d{1,2}_\d{1,2}", version):
+        raise ValueError("รุ่นของต้นพาสซีฟไม่ถูกต้อง")
+    with _tree_lock:
+        if version in _trees:
+            return _trees[version]
+    path = TREE_DIR / f"tree_{version}.json"
+    if path.exists():
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        async with make_client() as client:
+            r = await client.get(TREE_URL.format(v=version), follow_redirects=True)
+            r.raise_for_status()
+            raw = r.json()
+        TREE_DIR.mkdir(exist_ok=True)
+        path.write_text(json.dumps(raw), encoding="utf-8")
+    compact = {"version": version, **pp.compact_tree(raw)}
+    with _tree_lock:
+        _trees[version] = compact
+    return compact
 SITE_HELP = {
     "mobalytics.gg": "เปิดหน้าบิวในเบราว์เซอร์ → หาปุ่ม \"PoB\" / \"Export to PoB\" (มักอยู่ใกล้ชื่อบิวหรือส่วน Equipment) "
                      "→ กดคัดลอกโค้ด → กลับมาวางในช่องนี้",
@@ -273,6 +303,8 @@ async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], Non
         league = await resolve_league(str(opts.get("league") or ""), client)
         emit({"type": "build", "title": build.title, "league": league,
               "items": len(build.items), "gems": len(build.gems)})
+        if build.tree.get("nodes"):
+            emit({"type": "tree", **build.tree})
         # full item details for the equipment view (slot, rarity, mods, runes)
         emit({"type": "items", "items": [{
             "slot": it.slot, "rarity": it.rarity, "name": it.name, "base": it.base,
@@ -352,6 +384,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, asyncio.run(get_catalog(league)))
             except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
                 self._json(502, {"error": str(exc)})
+        elif url.path == "/api/tree":
+            version = parse_qs(url.query).get("v", [""])[0] or DEFAULT_TREE
+            try:
+                self._json(200, asyncio.run(get_tree(version)))
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+            except (httpx.HTTPError, OSError) as exc:
+                self._json(502, {"error": f"โหลดข้อมูลต้นพาสซีฟไม่ได้: {exc}"})
         elif url.path == "/api/builds":
             self._json(200, BUILDS.all())
         elif url.path == "/api/leagues":

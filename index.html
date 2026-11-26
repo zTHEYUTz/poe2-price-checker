@@ -273,7 +273,8 @@
   /* equipment view */
   .equip { margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 18px; }
   .eqhead { display: flex; gap: 12px; align-items: baseline; margin-bottom: 12px; }
-  .eqhead b { color: var(--gold); font-family: Cinzel, serif; letter-spacing: .03em; }
+  .eqhead b { color: var(--gold); font-family: Cinzel, serif; letter-spacing: .03em; white-space: nowrap; }
+  .eqhead { flex-wrap: wrap; }
   .eqgrid { --u: min(52px, calc((100vw - 90px) / 8)); display: grid; gap: 6px; justify-content: center;
     grid-template-columns: repeat(8, var(--u)); grid-template-rows: 26px repeat(9, var(--u)); }
   .eqset { display: flex; gap: 4px; align-self: end; justify-content: center; }
@@ -301,6 +302,28 @@
   .eqrow .cell { width: 64px; text-align: center; }
   .eqrow .eq { width: 56px; height: 56px; margin: 0 auto; }
   .eqrow .cap { font-size: 11px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* passive tree */
+  .ptctl { margin-left: auto; display: flex; gap: 4px; }
+  .ptbox { position: relative; height: min(560px, 70vh); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+    background: radial-gradient(circle at 50% 50%, #17130f, #0b0a08 80%); touch-action: none; cursor: grab; }
+  .ptbox.drag { cursor: grabbing; }
+  #ptSvg { width: 100%; height: 100%; display: block; }
+  #ptSvg .e { stroke: #3a3126; stroke-width: 14; fill: none; }
+  #ptSvg .e.on { stroke: #c9973c; stroke-width: 26; }
+  #ptSvg .e.w2 { stroke: #4b7fc4; stroke-width: 26; }
+  #ptSvg circle { fill: #221c15; stroke: #4d4234; stroke-width: 8; }
+  #ptSvg circle.k1 { stroke: #7a6440; stroke-width: 12; }
+  #ptSvg circle.k2 { stroke: #a07a3a; stroke-width: 18; }
+  #ptSvg circle.k3 { fill: #142018; stroke: #3f6a4c; }
+  #ptSvg circle.k4 { fill: #1c1915; }
+  #ptSvg circle.on { fill: #e0b04f; stroke: #fff1c4; }
+  #ptSvg circle.w2 { fill: #5d97e6; stroke: #d6e6ff; }
+  #ptSvg circle:hover { stroke: #fff; stroke-width: 20; }
+  .ptmsg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); pointer-events: none; }
+  .ptchips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ptchips span { font-size: 12.5px; padding: 4px 10px; border-radius: 99px; background: var(--panel2); border: 1px solid var(--line); cursor: help; }
+  .ptchips span.k2 { border-color: #a07a3a; color: var(--gold); }
+  .ptchips span.w2 { border-color: #4b7fc4; }
   footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
   @media (max-width: 600px) {
     button.go { margin-left: 0; width: 100%; }
@@ -429,6 +452,15 @@
         <div class="eqgrid" id="eqGrid"></div>
         <div class="eqsub" id="eqJewelsWrap" hidden><div class="eqlabel">Jewel ในต้นพาสซีฟ</div><div class="eqrow" id="eqJewels"></div></div>
         <div class="eqsub" id="eqOtherWrap" hidden><div class="eqlabel">ช่องอื่น ๆ</div><div class="eqrow" id="eqOther"></div></div>
+      </div>
+      <div class="equip" id="ptree" hidden>
+        <div class="eqhead"><b>ต้นพาสซีฟ</b><span class="note" id="ptInfo"></span>
+          <span class="ptctl"><button class="btn sm" id="ptIn" title="ซูมเข้า">＋</button><button class="btn sm" id="ptOut" title="ซูมออก">－</button><button class="btn sm" id="ptFit" title="ดูเฉพาะจุดที่บิวเลือก">พอดีบิว</button><button class="btn sm" id="ptAll" title="ดูทั้งต้น">ทั้งต้น</button></span></div>
+        <div class="ptbox" id="ptBox"><svg id="ptSvg" xmlns="http://www.w3.org/2000/svg"></svg><div class="ptmsg" id="ptMsg"></div></div>
+        <div class="note" style="margin-top:6px">ลากเพื่อเลื่อน · หมุนลูกกลิ้งเมาส์เพื่อซูม · ชี้ที่จุดเพื่อดูความสามารถ · <span style="color:var(--gold)">●</span> จุดที่เลือก
+          <span id="ptLegend2" hidden>· <span style="color:#6fa8ff">●</span> เฉพาะชุดอาวุธ II</span></div>
+        <div class="eqsub" id="ptKeyWrap" hidden><div class="eqlabel">Keystone / Notable ที่เลือก</div><div class="ptchips" id="ptKeys"></div></div>
+        <div class="eqsub" id="ptAscWrap" hidden><div class="eqlabel" id="ptAscLabel">Ascendancy</div><div class="ptchips" id="ptAsc"></div></div>
       </div>
       <div class="tablewrap">
         <table>
@@ -1015,6 +1047,144 @@ function showEqTip(target, it) {
   tip.style.top = Math.max(8, Math.min(a.top, innerHeight - b.height - 8)) + "px";
 }
 
+/* ---------- passive tree ---------- */
+let treeInfo = null, treeData = null, treeView = null;
+const treeCache = {};
+const NODE_R = [32, 54, 80, 50, 26];  // by kind: normal, notable, keystone, jewel, attribute
+
+async function loadTree(info) {
+  treeInfo = info; treeData = null;
+  $("ptree").hidden = false; $("ptMsg").textContent = "กำลังโหลดต้นพาสซีฟ…"; $("ptSvg").innerHTML = "";
+  const v = info.version || "";
+  try {
+    if (!treeCache[v]) {
+      const r = await fetch("/api/tree?v=" + encodeURIComponent(v));
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      d.byId = new Map(d.nodes.map((n) => [n[0], n]));
+      treeCache[v] = d;
+    }
+    if (treeInfo !== info) return;  // another build was started meanwhile
+    treeData = treeCache[v];
+    $("ptMsg").textContent = "";
+    renderTree(true);
+  } catch (e) {
+    $("ptMsg").textContent = "แสดงต้นพาสซีฟไม่ได้: " + e.message;
+  }
+}
+
+function renderTree(fit) {
+  if (!treeData || !treeInfo) return;
+  const alloc = new Set(treeInfo.nodes || []), set2 = new Set(treeInfo.set2 || []);
+  const st = (id) => (set2.has(id) ? "w2" : alloc.has(id) ? "on" : "");
+  const by = treeData.byId;
+  const main = (n) => n && !n[6];
+  let edges = "", onEdges = "";
+  for (const [a, b, arc, sweep] of treeData.edges) {
+    const A = by.get(a), B = by.get(b);
+    if (!main(A) || !main(B)) continue;
+    const cls = alloc.has(a) && alloc.has(b) ? (set2.has(a) || set2.has(b) ? "e w2" : "e on") : "e";
+    const d = arc ? `M${A[1]} ${A[2]}A${arc} ${arc} 0 0 ${sweep} ${B[1]} ${B[2]}` : `M${A[1]} ${A[2]}L${B[1]} ${B[2]}`;
+    if (cls === "e") edges += `<path class="e" d="${d}"/>`; else onEdges += `<path class="${cls}" d="${d}"/>`;
+  }
+  let nodes = "";
+  for (const n of treeData.nodes) {
+    if (!main(n)) continue;
+    const c = st(n[0]);
+    nodes += `<circle data-id="${n[0]}" class="k${n[3]} ${c}" cx="${n[1]}" cy="${n[2]}" r="${NODE_R[n[3]] || 32}"/>`;
+  }
+  $("ptSvg").innerHTML = `<g>${edges}</g><g>${onEdges}</g><g>${nodes}</g>`;
+
+  // summary + chips
+  const picked = [...alloc].map((id) => by.get(id)).filter(Boolean);
+  const mainPicked = picked.filter((n) => !n[6]);
+  const asc = picked.filter((n) => n[6]);
+  const nKey = mainPicked.filter((n) => n[3] === 2).length, nNot = mainPicked.filter((n) => n[3] === 1).length;
+  $("ptInfo").textContent = `เลือก ${mainPicked.length} จุด · Keystone ${nKey} · Notable ${nNot}` +
+    (asc.length ? ` · Ascendancy ${asc.length}` : "") + ` · ข้อมูลต้นรุ่น ${treeData.version.replace("_", ".")}` +
+    (treeInfo.version && treeInfo.version !== treeData.version ? ` (บิวใช้ ${treeInfo.version.replace("_", ".")})` : "");
+  $("ptLegend2").hidden = !set2.size;
+  const chip = (n) => `<span class="k${n[3]} ${set2.has(n[0]) ? "w2" : ""}" data-id="${n[0]}">${esc(n[4] || "?")}</span>`;
+  const keys = mainPicked.filter((n) => n[3] === 2 || n[3] === 1).sort((a, b) => b[3] - a[3]);
+  $("ptKeyWrap").hidden = !keys.length; $("ptKeys").innerHTML = keys.map(chip).join("");
+  const ascShown = asc.filter((n) => n[3] === 1 || n[3] === 2 || n[5].length);
+  $("ptAscWrap").hidden = !ascShown.length; $("ptAsc").innerHTML = ascShown.map(chip).join("");
+  if (asc.length) $("ptAscLabel").textContent = "Ascendancy: " + (asc[0][6] || "");
+  document.querySelectorAll("#ptKeys span, #ptAsc span").forEach((el) => {
+    const n = by.get(+el.dataset.id);
+    el.onmouseenter = () => showNodeTip(el, n, alloc.has(n[0]), set2.has(n[0]));
+    el.onmouseleave = hideTip;
+  });
+
+  if (fit || !treeView) {
+    const pts = (mainPicked.length ? mainPicked : treeData.nodes.filter(main));
+    const xs = pts.map((n) => n[1]), ys = pts.map((n) => n[2]);
+    fitTree(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), mainPicked.length ? 900 : 300);
+  } else applyView();
+}
+
+function fitTree(x0, y0, x1, y1, pad) {
+  const box = $("ptBox").getBoundingClientRect();
+  let w = x1 - x0 + pad * 2, h = y1 - y0 + pad * 2;
+  const aspect = (box.width || 800) / (box.height || 560);
+  if (w / h < aspect) w = h * aspect; else h = w / aspect;  // keep the tree's proportions
+  treeView = { x: (x0 + x1) / 2 - w / 2, y: (y0 + y1) / 2 - h / 2, w, h };
+  applyView();
+}
+function applyView() { $("ptSvg").setAttribute("viewBox", `${treeView.x} ${treeView.y} ${treeView.w} ${treeView.h}`); }
+function zoomTree(f, cx, cy) {
+  if (!treeView) return;
+  const v = treeView;
+  cx ??= v.x + v.w / 2; cy ??= v.y + v.h / 2;
+  const nw = Math.min(Math.max(v.w * f, 800), 80000), k = nw / v.w;
+  treeView = { x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k, w: nw, h: v.h * k };
+  applyView();
+}
+function svgPoint(evt) {
+  const r = $("ptSvg").getBoundingClientRect();
+  return [treeView.x + ((evt.clientX - r.left) / r.width) * treeView.w, treeView.y + ((evt.clientY - r.top) / r.height) * treeView.h];
+}
+function showNodeTip(target, n, on, w2) {
+  if (!n) return;
+  const kinds = ["Passive", "Notable", "Keystone", "Jewel Socket", "Attribute"];
+  const tip = $("tip");
+  tip.className = n[3] === 2 ? "r-unique" : n[3] === 1 ? "r-rare" : "";
+  tip.innerHTML = `<div class="th"><div class="n">${esc(n[4] || "?")}</div><div class="b">${esc(kinds[n[3]] || "")}${n[6] ? " · " + esc(n[6]) : ""}</div></div>` +
+    (n[5].length ? `<div class="sec">${n[5].map((t) => `<div class="m-explicit">${esc(t)}</div>`).join("")}</div>` : "") +
+    `<div class="cost" style="color:${on ? (w2 ? "#6fa8ff" : "var(--gold)") : "var(--muted)"}">${on ? (w2 ? "เลือกไว้ (เฉพาะชุดอาวุธ II)" : "บิวนี้เลือกจุดนี้") : "ไม่ได้เลือก"}</div>`;
+  tip.hidden = false;
+  const a = target.getBoundingClientRect(), b = tip.getBoundingClientRect();
+  tip.style.left = Math.max(12, Math.min(a.right + 10, innerWidth - b.width - 12)) + "px";
+  tip.style.top = Math.max(8, Math.min(a.top - 10, innerHeight - b.height - 8)) + "px";
+}
+
+(() => {
+  const box = $("ptBox");
+  let drag = null;
+  box.addEventListener("wheel", (e) => { if (!treeView) return; e.preventDefault(); const [x, y] = svgPoint(e); zoomTree(e.deltaY > 0 ? 1.2 : 1 / 1.2, x, y); }, { passive: false });
+  box.addEventListener("pointerdown", (e) => { if (!treeView) return; drag = { x: e.clientX, y: e.clientY, v: { ...treeView } }; box.classList.add("drag"); box.setPointerCapture(e.pointerId); hideTip(); });
+  box.addEventListener("pointermove", (e) => {
+    if (drag) {
+      const r = box.getBoundingClientRect();
+      treeView = { ...drag.v, x: drag.v.x - ((e.clientX - drag.x) / r.width) * drag.v.w, y: drag.v.y - ((e.clientY - drag.y) / r.height) * drag.v.h };
+      applyView(); return;
+    }
+    const c = e.target.closest && e.target.closest("circle[data-id]");
+    if (c && treeData) {
+      const n = treeData.byId.get(+c.dataset.id);
+      const alloc = new Set(treeInfo.nodes || []), set2 = new Set(treeInfo.set2 || []);
+      showNodeTip(c, n, alloc.has(n[0]), set2.has(n[0]));
+    } else hideTip();
+  });
+  const end = () => { drag = null; box.classList.remove("drag"); };
+  box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+  box.addEventListener("pointerleave", () => { if (!drag) hideTip(); });
+  $("ptIn").onclick = () => zoomTree(1 / 1.4);
+  $("ptOut").onclick = () => zoomTree(1.4);
+  $("ptFit").onclick = () => renderTree(true);
+  $("ptAll").onclick = () => { const ns = treeData ? treeData.nodes.filter((n) => !n[6]) : []; if (ns.length) fitTree(Math.min(...ns.map((n) => n[1])), Math.min(...ns.map((n) => n[2])), Math.max(...ns.map((n) => n[1])), Math.max(...ns.map((n) => n[2])), 300); };
+})();
+
 function renderBuild() {
   renderEquip();
   const sorted = [...lines].sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
@@ -1259,7 +1429,7 @@ $("go").onclick = async () => {
   const source = $("src").value.trim();
   if (!source) { showErr($("err"), "กรุณาวาง PoB code หรือลิงก์ก่อน"); return; }
   store.set("poe2src", source);
-  showErr($("err"), ""); lines = []; buildItems = []; renderBuild();
+  showErr($("err"), ""); lines = []; buildItems = []; treeInfo = null; $("ptree").hidden = true; renderBuild();
   lastBuild = { source, league: $("league").value, title: "", rares: $("rares").checked, blocked: false }; $("savebar").hidden = true;
   $("result").style.display = "none";
   $("go").disabled = true; $("status").classList.add("on"); $("statusText").textContent = "กำลังเริ่ม…";
@@ -1267,6 +1437,7 @@ $("go").onclick = async () => {
   try {
     await streamPost("/api/price", { source, league: $("league").value, no_rares: !$("rares").checked, ratio: parseFloat($("ratio").value) || 0.8 }, (ev) => {
       if (ev.type === "status") $("statusText").textContent = ev.msg;
+      else if (ev.type === "tree") loadTree(ev);
       else if (ev.type === "items") { buildItems = ev.items || []; weaponSet = 1; renderEquip(); }
       else if (ev.type === "build") {
         $("meta").textContent = `บิว ${ev.title} · ลีก ${ev.league} · ไอเทม ${ev.items} ชิ้น · เจม ${ev.gems} เม็ด`;

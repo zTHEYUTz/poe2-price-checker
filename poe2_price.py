@@ -123,6 +123,8 @@ class Build:
     title: str
     items: list[Item]
     gems: list[Gem]
+    # passive tree: {version, nodes, set1, set2, class, ascendancy}
+    tree: dict[str, Any] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------
@@ -369,7 +371,98 @@ def parse_build(xml_text: str) -> Build:
                     gem_id=gid,
                     swap=swap,
                 ))
-    return Build(title=title, items=items, gems=gems)
+    return Build(title=title, items=items, gems=gems, tree=parse_tree_spec(root))
+
+
+def parse_tree_spec(root: ET.Element) -> dict[str, Any]:
+    """Allocated passives of the active tree spec (empty dict if the build has none)."""
+    tree = root.find("Tree")
+    if tree is None:
+        return {}
+    specs = tree.findall("Spec")
+    if not specs:
+        return {}
+    active = tree.get("activeSpec", "1")
+    idx = int(active) - 1 if active.isdigit() else 0
+    spec = specs[idx] if 0 <= idx < len(specs) else specs[0]
+    ids = lambda text: [int(x) for x in re.findall(r"\d+", text or "")]  # noqa: E731
+    nodes = ids(spec.get("nodes"))
+    if not nodes:
+        return {}
+    out: dict[str, Any] = {"version": spec.get("treeVersion") or "", "nodes": nodes,
+                           "class": spec.get("classInternalId") or "",
+                           "ascendancy": spec.get("ascendancyInternalId") or ""}
+    for child in spec:  # weapon-set passives: <WeaponSet1 nodes="..."/>, <WeaponSet2 .../>
+        m = re.match(r"WeaponSet(\d)$", child.tag)
+        if m:
+            out[f"set{m.group(1)}"] = ids(child.get("nodes"))
+    return out
+
+
+TREE_KINDS = {"normal": 0, "notable": 1, "keystone": 2, "jewel": 3, "attribute": 4}
+
+
+def compact_tree(raw: dict[str, Any]) -> dict[str, Any]:
+    """Turn PoB2's tree.json into the little the page needs to draw it.
+
+    Node position: group centre + orbit radius at the node's orbit angle
+    (the same maths Path of Building uses). Ascendancy nodes sit on their own
+    islands, so they are kept but flagged with ``asc``.
+    Output: nodes = [[id, x, y, kind, name, stats, asc]], edges = [[a, b, arcRadius, sweep]].
+    """
+    import math
+
+    const = raw.get("constants") or {}
+    radii = const.get("orbitRadii") or []
+    angles = const.get("orbitAnglesByOrbit") or []
+    groups = raw.get("groups") or {}
+    pos: dict[int, tuple[float, float, float, int, Any]] = {}
+    nodes_out = []
+    for key, n in (raw.get("nodes") or {}).items():
+        if not str(key).isdigit() or not isinstance(n, dict) or n.get("group") is None:
+            continue
+        gid = int(n["group"])
+        if isinstance(groups, dict):
+            g = groups.get(str(gid))
+        else:  # PoB2's tree.json: a list where group id N is at index N - 1
+            g = groups[gid - 1] if 0 < gid <= len(groups) else None
+        if not g:
+            continue
+        o, oi = int(n.get("orbit") or 0), int(n.get("orbitIndex") or 0)
+        try:
+            ang = float(angles[o][oi])
+            r = float(radii[o])
+        except (IndexError, TypeError, ValueError):
+            continue
+        x, y = g["x"] + math.sin(ang) * r, g["y"] - math.cos(ang) * r
+        nid = int(key)
+        pos[nid] = (x, y, ang, o, n["group"])
+        kind = ("keystone" if n.get("isKeystone") else "notable" if n.get("isNotable")
+                else "jewel" if n.get("isJewelSocket") else "attribute" if n.get("isAttribute") else "normal")
+        nodes_out.append([nid, round(x), round(y), TREE_KINDS[kind], n.get("name") or "",
+                          [s for s in n.get("stats") or [] if isinstance(s, str)], n.get("ascendancyName") or ""])
+    edges = []
+    seen: set[tuple[int, int]] = set()  # a link may be listed on one or both of its nodes
+    for key, n in (raw.get("nodes") or {}).items():
+        if not str(key).isdigit() or int(key) not in pos:
+            continue
+        for c in n.get("connections") or []:
+            b = int(c.get("id", -1)) if isinstance(c, dict) else int(c)
+            a = int(key)
+            if b not in pos or a == b:
+                continue
+            a, b = min(a, b), max(a, b)
+            if (a, b) in seen:
+                continue
+            seen.add((a, b))
+            (xa, ya, aa, oa, ga), (xb, yb, ab, ob, gb) = pos[a], pos[b]
+            arc, sweep = 0, 0
+            if ga == gb and oa == ob and oa > 0:  # same ring of the same group: draw the curve
+                arc = round(float(radii[oa]))
+                d = (ab - aa) % (2 * math.pi)
+                sweep = 1 if d < math.pi else 0
+            edges.append([a, b, arc, sweep])
+    return {"nodes": nodes_out, "edges": edges}
 
 
 # --------------------------------------------------------------------------

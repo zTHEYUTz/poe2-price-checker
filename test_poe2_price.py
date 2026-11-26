@@ -409,3 +409,39 @@ def test_swap_only_skills() -> None:
         '      </Skill>\n      <Skill enabled="true" source="Item:1">')
     gems = {g.name: g.swap for g in pp.parse_build(xml).gems}
     assert gems == {"Fireball": False, "Rupture the Soul": False, "Lightning Arrow": True}
+
+
+def test_parse_tree_spec() -> None:
+    xml = XML.replace('<Spec><Sockets>', '<Spec treeVersion="0_5" classInternalId="Witch" ascendancyInternalId="Witch1" '
+                      'nodes="4,11578,9988"><WeaponSet1 nodes="11578"/><WeaponSet2 nodes="9988"/><Sockets>')
+    t = pp.parse_build(xml).tree
+    assert t["version"] == "0_5" and t["nodes"] == [4, 11578, 9988]
+    assert (t["set1"], t["set2"], t["ascendancy"]) == ([11578], [9988], "Witch1")
+    assert pp.parse_build(XML).tree == {}  # no allocated nodes -> no tree
+
+
+def test_compact_tree_positions_and_arcs() -> None:
+    import math
+    raw = {
+        "constants": {"orbitRadii": [0, 82], "orbitAnglesByOrbit": [[0], [0, math.pi / 2, math.pi, 3 * math.pi / 2]]},
+        "groups": {"1": {"x": 100, "y": 200}},
+        "nodes": {
+            "1": {"group": 1, "orbit": 0, "orbitIndex": 0, "name": "Centre", "isNotable": True,
+                  "connections": [{"id": 2, "orbit": 0}]},
+            "2": {"group": 1, "orbit": 1, "orbitIndex": 1, "name": "East", "connections": [{"id": 3, "orbit": 1}]},
+            "3": {"group": 1, "orbit": 1, "orbitIndex": 2, "name": "South", "ascendancyName": "X"},
+            "root": {"connections": []},
+        },
+    }
+    t = pp.compact_tree(raw)
+    pos = {n[0]: (n[1], n[2], n[3], n[6]) for n in t["nodes"]}
+    assert pos[1] == (100, 200, 1, "") and pos[2][:2] == (182, 200) and pos[3][:2] == (100, 282)
+    assert pos[3][3] == "X"
+    assert sorted(map(tuple, t["edges"])) == [(1, 2, 0, 0), (2, 3, 82, 1)]  # same ring -> arc, clockwise
+
+
+def test_compact_tree_group_list() -> None:
+    raw = {"constants": {"orbitRadii": [0], "orbitAnglesByOrbit": [[0]]},
+           "groups": [{"x": 1, "y": 2}, {"x": 30, "y": 40}],  # group 2 is at index 1
+           "nodes": {"7": {"group": 2, "orbit": 0, "orbitIndex": 0, "name": "N"}}}
+    assert pp.compact_tree(raw)["nodes"][0][:3] == [7, 30, 40]
