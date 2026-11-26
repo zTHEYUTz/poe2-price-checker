@@ -483,6 +483,55 @@ def listing_info(entry: dict[str, Any], ninja: NinjaPrices) -> dict[str, Any] | 
         "instant": bool(listing.get("hideout_token")),
         "indexed": listing.get("indexed") or "",
         "icon": str(((entry or {}).get("item") or {}).get("icon") or ""),
+        "item": item_summary((entry or {}).get("item") or {}),
+    }
+
+
+LINK_TAG = re.compile(r"\[([^\]|]+)\|([^\]]+)\]")
+PLAIN_TAG = re.compile(r"\[([^\]|]+)\]")
+MOD_KEYS = (
+    ("enchantMods", "enchant"), ("runeMods", "rune"), ("implicitMods", "implicit"),
+    ("fracturedMods", "fractured"), ("explicitMods", "explicit"),
+    ("desecratedMods", "desecrated"), ("craftedMods", "crafted"),
+)
+
+
+def clean_trade_text(text: Any) -> str:
+    """Strip PoE2 markup like ``[EnergyShield|Energy Shield]`` -> ``Energy Shield``."""
+    t = LINK_TAG.sub(r"\2", str(text or ""))
+    return PLAIN_TAG.sub(r"\1", t).strip()
+
+
+def item_summary(item: dict[str, Any]) -> dict[str, Any]:
+    """Compact view of a trade-site item: name, base, item level, properties, mods."""
+    props: list[str] = []
+    for p in item.get("properties") or []:
+        name = clean_trade_text(p.get("name"))
+        vals = [clean_trade_text(v[0]) for v in p.get("values") or [] if v]
+        if not name:
+            continue
+        if "{0}" in name:
+            for i, v in enumerate(vals):
+                name = name.replace(f"{{{i}}}", v)
+            props.append(name)
+        else:
+            props.append(f"{name}: {', '.join(vals)}" if vals else name)
+    def mod_text(m: Any) -> str:
+        # most mods are strings; PoE2 rune mods come as {"description": ..., "domain": ...}
+        if isinstance(m, dict):
+            m = m.get("description") or m.get("text") or ""
+        return clean_trade_text(m)
+
+    mods = [{"text": t, "kind": kind}
+            for key, kind in MOD_KEYS for m in item.get(key) or [] if (t := mod_text(m))]
+    return {
+        "name": clean_trade_text(item.get("name")),
+        "base": clean_trade_text(item.get("typeLine") or item.get("baseType")),
+        "rarity": str(item.get("rarity") or ""),
+        "ilvl": item.get("ilvl"),
+        "corrupted": bool(item.get("corrupted")),
+        "props": props[:8],
+        "mods": mods,
     }
 
 

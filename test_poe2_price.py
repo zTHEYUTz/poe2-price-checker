@@ -219,3 +219,27 @@ def test_search_cache_ttl() -> None:
     c.put(k, ("id", []), now=0.0)
     assert c.get(k, now=299.0) == ("id", [])
     assert c.get(k, now=301.0) is None
+
+
+def test_item_summary_cleans_trade_item() -> None:
+    raw = {
+        "name": "Doom Grip", "typeLine": "Vaal Gloves", "rarity": "Rare", "ilvl": 81, "corrupted": True,
+        "properties": [{"name": "Quality", "values": [["+20%", 1]]},
+                       {"name": "[Armour|Armour]", "values": [["180", 1]]},
+                       {"name": "Stack Size {0}", "values": [["1/10", 0]]}],
+        "implicitMods": ["+15 to [Strength|Strength]"],
+        "runeMods": ["12% increased [Armour]",
+                     {"description": "Bonded: +20 to maximum [Life|Life]", "domain": "rune", "hash": "x"}],
+        "explicitMods": ["+85 to maximum [Life|Life]", "+32% to [Resistances|Fire Resistance]"],
+    }
+    s = pp.item_summary(raw)
+    assert (s["name"], s["base"], s["ilvl"], s["corrupted"]) == ("Doom Grip", "Vaal Gloves", 81, True)
+    assert s["props"] == ["Quality: +20%", "Armour: 180", "Stack Size 1/10"]
+    assert s["mods"] == [
+        {"text": "12% increased Armour", "kind": "rune"},
+        {"text": "Bonded: +20 to maximum Life", "kind": "rune"},
+        {"text": "+15 to Strength", "kind": "implicit"},
+        {"text": "+85 to maximum Life", "kind": "explicit"},
+        {"text": "+32% to Fire Resistance", "kind": "explicit"},
+    ]
+    assert pp.item_summary({})["mods"] == []

@@ -154,6 +154,30 @@
   }
   .banner b { color: var(--text); }
   .banner a { color: var(--gold); }
+  .tipme { cursor: help; border-bottom: 1px dotted var(--muted); outline: none; }
+  .tipme:focus-visible { outline: 2px solid var(--gold-dim); outline-offset: 2px; }
+  .tiphint { font-size: 12px; color: var(--muted); margin-left: 4px; }
+  #tip {
+    position: fixed; z-index: 50; max-width: min(380px, calc(100vw - 24px)); pointer-events: none;
+    background: #0b0a09f2; border: 1px solid #6b5636; border-radius: 6px; box-shadow: 0 8px 28px #000a;
+    font-size: 13.5px; line-height: 1.45; text-align: center; overflow: hidden;
+  }
+  #tip[hidden] { display: none; }
+  #tip .th { padding: 8px 12px; background: #1d1810; border-bottom: 1px solid #3a3026; }
+  #tip .th .n { font-weight: 600; font-size: 15px; }
+  #tip .th .b { color: var(--text); }
+  #tip.r-unique .n { color: var(--unique); } #tip.r-rare .n, #tip.r-rare .th .b { color: var(--rare); }
+  #tip.r-magic .n { color: var(--magic); } #tip.r-gem .n { color: var(--gem); } #tip.r-currency .n { color: var(--currency); }
+  #tip .sec { padding: 6px 12px; border-top: 1px solid #2a231b; }
+  #tip .sec:first-of-type { border-top: 0; }
+  #tip .pr { color: #9c9486; } #tip .pr b { color: var(--text); font-weight: 500; }
+  #tip .m-explicit, #tip .m-fractured { color: #8888ff; }
+  #tip .m-implicit, #tip .m-rune, #tip .m-enchant { color: #b8c4e0; }
+  #tip .m-crafted { color: #b4b4ff; } #tip .m-desecrated { color: #c890e8; }
+  #tip .m-fractured::after { content: " (fractured)"; color: #a29160; font-size: 11px; }
+  #tip .m-desecrated::after { content: " (desecrated)"; color: #8a6aa0; font-size: 11px; }
+  #tip .corr { color: var(--bad); }
+  #tip .cost { padding: 7px 12px; background: #15120e; border-top: 1px solid #3a3026; color: var(--gold); font-weight: 600; }
   footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
   @media (max-width: 600px) {
     button.go { margin-left: 0; width: 100%; }
@@ -254,6 +278,7 @@
   <footer>ยูนีค / currency / เจม / รูน: ราคาจาก poe.ninja (อัปเดตราว 1 ชม.) · rare / magic: ค้นของที่ mod ใกล้เคียงในเทรดไซต์ แล้วใช้มัธยฐานของ 10 รายการที่ถูกที่สุด จึงเป็นค่าประมาณ</footer>
 </div>
 
+<div id="tip" role="tooltip" hidden></div>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -318,6 +343,61 @@ async function copyText(t, btn) {
   const old = btn.textContent; btn.textContent = "คัดลอกแล้ว ✓"; setTimeout(() => (btn.textContent = old), 1500);
 }
 
+/* ---------- hover box: what each shop's item actually has ---------- */
+function tipHtml(x, r) {
+  const it = x.item || {};
+  const rar = (it.rarity || "").toLowerCase();
+  const head = `<div class="th">${it.name ? `<div class="n">${esc(it.name)}</div>` : ""}<div class="b${it.name ? "" : " n"}">${esc(it.base || "")}</div></div>`;
+  const props = [...(it.props || [])];
+  if (it.ilvl) props.push(`Item Level: ${it.ilvl}`);
+  const sections = [];
+  if (props.length) sections.push(props.map((t) => {
+    const k = t.indexOf(": ");
+    return `<div class="pr">${k > 0 ? `${esc(t.slice(0, k))}: <b>${esc(t.slice(k + 2))}</b>` : esc(t)}</div>`;
+  }).join(""));
+  const groups = [["enchant", "rune"], ["implicit"], ["fractured", "explicit", "desecrated", "crafted"]];
+  for (const g of groups) {
+    const ms = (it.mods || []).filter((m) => g.includes(m.kind));
+    if (ms.length) sections.push(ms.map((m) => `<div class="m-${esc(m.kind)}">${esc(m.text)}</div>`).join(""));
+  }
+  if (it.corrupted) sections.push(`<div class="corr">Corrupted</div>`);
+  if (!sections.length) sections.push(`<div class="pr">ไม่มีข้อมูล mod</div>`);
+  const f = x.value != null ? fmt(x.value, r) : null;
+  return {
+    cls: rar ? "r-" + rar : "",
+    html: head + sections.map((h) => `<div class="sec">${h}</div>`).join("") +
+      `<div class="cost">${esc(x.seller)} — ${esc(priceText(x))}${f ? ` <span style="color:var(--muted);font-weight:400">≈ ${esc(f.join(" / "))}</span>` : ""}</div>`,
+  };
+}
+function showTip(target, x, r) {
+  const tip = $("tip");
+  const t = tipHtml(x, r);
+  tip.className = t.cls; tip.innerHTML = t.html; tip.hidden = false;
+  const a = target.getBoundingClientRect(), b = tip.getBoundingClientRect();
+  const left = Math.max(12, Math.min(a.left, innerWidth - b.width - 12));
+  const below = a.bottom + 8, above = a.top - b.height - 8;
+  tip.style.left = left + "px";
+  tip.style.top = (below + b.height < innerHeight - 8 || above < 8 ? below : above) + "px";
+}
+function hideTip() { $("tip").hidden = true; }
+function bindTips(el, ls, r) {
+  el.querySelectorAll("[data-tip]").forEach((n) => {
+    const x = ls[+n.dataset.tip];
+    if (!x || !x.item) { n.classList.remove("tipme"); return; }
+    const show = () => showTip(n, x, r);
+    n.addEventListener("mouseenter", show);
+    n.addEventListener("focus", show);
+    n.addEventListener("mouseleave", hideTip);
+    n.addEventListener("blur", hideTip);
+    n.addEventListener("click", (e) => e.stopPropagation());
+    n.addEventListener("pointerup", (e) => {  // touch screens: tap to open / close
+      if (e.pointerType !== "mouse") $("tip").hidden ? show() : hideTip();
+    });
+  });
+}
+document.addEventListener("click", hideTip);
+addEventListener("scroll", hideTip, { passive: true });
+
 function shopPanel(line, el, r) {
   if (!el) return;
   if (!line.query) { el.innerHTML = ""; return; }
@@ -327,7 +407,7 @@ function shopPanel(line, el, r) {
   let html = `<div class="top">`;
   if (best) {
     const f = best.value != null ? fmt(best.value, r) : null;
-    html += `<div class="who">ร้านถูกสุด: <b>${esc(best.seller)}</b> — <b>${esc(priceText(best))}</b>${f ? ` <span class="note">≈ ${esc(f.join(" / "))}</span>` : ""}
+    html += `<div class="who">ร้านถูกสุด: <b class="tipme" tabindex="0" data-tip="0">${esc(best.seller)}</b> — <b>${esc(priceText(best))}</b>${best.item ? `<span class="tiphint">(ชี้ที่ชื่อร้านเพื่อดู mod)</span>` : ""}${f ? ` <span class="note">≈ ${esc(f.join(" / "))}</span>` : ""}
       ${line.checkedAt ? `<span class="note">อัปเดต ${esc(line.checkedAt)}</span>` : ""}</div>
       <a class="btn warp" href="${esc(line.search_url)}" target="_blank" rel="noopener">วาปไปร้าน ↗</a>
       ${best.whisper ? `<button class="btn" data-act="copy">คัดลอกข้อความซื้อ</button>` : ""}`;
@@ -338,13 +418,14 @@ function shopPanel(line, el, r) {
   }
   html += `<button class="btn" data-act="refresh">${refreshLabel}</button></div>`;
   if (ls.length > 1) {
-    html += `<div class="others">` + ls.slice(1).map((x, i) => `<div class="o"><span>${esc(x.seller)} — ${esc(priceText(x))}</span>${x.whisper ? `<button class="btn sm" data-copy="${i + 1}">คัดลอกข้อความซื้อ</button>` : ""}</div>`).join("") + `</div>`;
+    html += `<div class="others">` + ls.slice(1).map((x, i) => `<div class="o"><span><span class="tipme" tabindex="0" data-tip="${i + 1}">${esc(x.seller)}</span> — ${esc(priceText(x))}</span>${x.whisper ? `<button class="btn sm" data-copy="${i + 1}">คัดลอกข้อความซื้อ</button>` : ""}</div>`).join("") + `</div>`;
   }
   if (best) html += `<div class="shopmsg">"วาปไปร้าน" จะเปิดเทรดไซต์ทางการ เรียงราคาถูกสุดก่อน → กด <b>Travel to Hideout</b> ที่ร้านแรก (ต้องล็อกอินเว็บ pathofexile.com และเปิดเกมไว้) · ถ้าร้านขายไปแล้ว กด "รีเฟรช" เพื่อหาร้านใหม่</div>`;
   html += `<div class="shopmsg" data-msg></div>`;
   el.innerHTML = html;
 
   const msg = el.querySelector("[data-msg]");
+  bindTips(el, ls, r);
   el.querySelector('[data-act="copy"]')?.addEventListener("click", (e) => copyText(best.whisper, e.currentTarget));
   el.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => copyText(ls[+b.dataset.copy].whisper, b)));
   el.querySelector('[data-act="refresh"]').addEventListener("click", async (e) => {
