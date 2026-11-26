@@ -58,6 +58,10 @@
     border: 0; border-radius: 8px; padding: 11px 26px; font: 600 16px "IBM Plex Sans Thai", sans-serif; cursor: pointer;
   }
   button.go:disabled { opacity: .5; cursor: wait; }
+  .quick { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+  .quick .hint { margin: 0; flex: 1 1 260px; }
+  button.go.big { margin-left: 0; padding: 14px 24px; font-size: 17px; }
+  @media (max-width: 600px) { button.go.big { width: 100%; } }
   button.ghost { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
   .status { display: none; align-items: center; gap: 10px; margin-top: 18px; color: var(--muted); }
   .status.on { display: flex; }
@@ -191,9 +195,12 @@
   <!-- ===== Paste item ===== -->
   <section class="pane" id="pane-item" hidden>
     <div class="card">
+      <div class="quick">
+        <button class="go big" id="clipGo">📋 วางจากคลิปบอร์ดและเช็คราคา</button>
+        <div class="hint">ในเกม เอาเมาส์ชี้ที่ไอเทม → กด <kbd>Ctrl</kbd>+<kbd>C</kbd> → กลับมากดปุ่มนี้ (หรือกด <kbd>Ctrl</kbd>+<kbd>V</kbd> ที่หน้านี้ก็เช็คให้ทันที)<br>ได้ทุกชนิด: ยูนีค, rare, magic, เจม, รูน, currency</div>
+      </div>
       <label class="lbl" for="itemText">ข้อความไอเทมจากเกม</label>
       <textarea id="itemText" placeholder="Item Class: Gloves&#10;Rarity: Rare&#10;Doom Grip&#10;Vaal Gloves&#10;--------&#10;…"></textarea>
-      <div class="hint">ในเกม เอาเมาส์ชี้ที่ไอเทม → กด <kbd>Ctrl</kbd>+<kbd>C</kbd> → กลับมาวางที่นี่ (<kbd>Ctrl</kbd>+<kbd>V</kbd>) · ได้ทุกชนิด: ยูนีค, rare, magic, เจม, รูน, currency</div>
       <div class="row">
         <label class="field"><span>ความใกล้เคียง mod (rare)</span>
           <input type="number" id="itemRatio" value="0.8" min="0.3" max="1" step="0.05">
@@ -471,6 +478,41 @@ $("q").oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(renderSearch,
 
 /* ---------- single item ---------- */
 $("itemText").value = store.get("poe2item") || "";
+
+/* one-click: read the clipboard, fill the box, check the price */
+const looksLikeItem = (t) => /^\s*(Item Class:|Rarity:)/m.test(t || "");
+function checkPasted(text) {
+  $("itemText").value = text.trim();
+  if ($("itemGo").disabled) return;  // a check is already running
+  $("itemGo").click();
+}
+$("clipGo").onclick = async () => {
+  showErr($("itemErr"), "");
+  let text = "";
+  try {
+    text = await navigator.clipboard.readText();
+  } catch {
+    // browser blocked clipboard access: fall back to Ctrl+V
+    $("itemText").focus(); $("itemText").select();
+    showErr($("itemErr"), "เบราว์เซอร์ไม่อนุญาตให้อ่านคลิปบอร์ด — กด Ctrl+V ที่หน้านี้แทน (จะเช็คราคาให้ทันที)");
+    return;
+  }
+  if (!looksLikeItem(text)) {
+    showErr($("itemErr"), "ในคลิปบอร์ดไม่ใช่ข้อความไอเทม — ในเกมชี้ที่ไอเทมแล้วกด Ctrl+C ก่อน แล้วค่อยกดปุ่มนี้");
+    return;
+  }
+  checkPasted(text);
+};
+// Ctrl+V anywhere on the item tab (or into the box) checks right away
+document.addEventListener("paste", (e) => {
+  if ($("pane-item").hidden) return;
+  const tgt = e.target;
+  if (tgt && tgt !== $("itemText") && /^(INPUT|TEXTAREA|SELECT)$/.test(tgt.tagName)) return;
+  const text = e.clipboardData?.getData("text") || "";
+  if (!looksLikeItem(text)) return;  // not item text: let the paste happen normally
+  e.preventDefault();
+  checkPasted(text);
+});
 $("itemGo").onclick = async () => {
   const text = $("itemText").value.trim();
   if (!text) { showErr($("itemErr"), "กรุณาวางข้อความไอเทมก่อน"); return; }
