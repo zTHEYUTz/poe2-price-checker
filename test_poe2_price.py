@@ -394,3 +394,18 @@ def test_mark_swap_wrapper() -> None:
     line = pp.PriceLine("Weapon 1 Swap", "X", 1.0, "poe.ninja")
     web.mark_swap(sent.append, True)(line)
     assert sent[0].swap is True
+
+
+def test_swap_only_skills() -> None:
+    assert pp.skill_is_swap_only({"set1": "false", "set2": "true"})
+    assert not pp.skill_is_swap_only({"set1": "true", "set2": "true"})   # both sets
+    assert not pp.skill_is_swap_only({"set1": "true", "set2": "false"})  # main set only
+    assert not pp.skill_is_swap_only({})                                 # older files: no info
+    assert pp.skill_is_swap_only({"slot": "Weapon 2 Swap"})
+    xml = XML.replace('<Skill enabled="true">', '<Skill enabled="true" set1="true" set2="true">', 1).replace(
+        '      <Skill enabled="true" source="Item:1">',
+        '      <Skill enabled="true" set1="false" set2="true">\n'
+        '        <Gem nameSpec="Lightning Arrow" level="18" gemId="Metadata/Items/Gems/SkillGemLightningArrow"/>\n'
+        '      </Skill>\n      <Skill enabled="true" source="Item:1">')
+    gems = {g.name: g.swap for g in pp.parse_build(xml).gems}
+    assert gems == {"Fireball": False, "Rupture the Soul": False, "Lightning Arrow": True}

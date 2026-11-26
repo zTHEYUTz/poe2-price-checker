@@ -93,6 +93,7 @@ class Gem:
     level: int
     support: bool
     gem_id: str = ""
+    swap: bool = False  # used only with the weapon-swap set
 
 
 @dataclass
@@ -295,6 +296,18 @@ def parse_game_item(text: str) -> tuple[Item, int]:
     return item, gem_level
 
 
+def skill_is_swap_only(attrib: dict[str, str]) -> bool:
+    """True when a PoB skill group is only used with the weapon-swap set.
+
+    Path of Building 2 saves ``set1`` / ``set2`` ("true"/"false") for the two weapon
+    sets; a group with only set 2 belongs to the swap weapons. Older files may
+    instead name the slot, e.g. ``slot="Weapon 1 Swap"``.
+    """
+    if "swap" in (attrib.get("slot") or "").lower():
+        return True
+    return attrib.get("set1") == "false" and attrib.get("set2") == "true"
+
+
 def parse_build(xml_text: str) -> Build:
     """Extract equipped items, tree jewels and gems from PoB XML."""
     root = ET.fromstring(xml_text)
@@ -345,6 +358,7 @@ def parse_build(xml_text: str) -> Build:
                 continue
             if skill.get("source"):  # granted by an item, not a real gem
                 continue
+            swap = skill_is_swap_only(skill.attrib)
             for g in skill.findall("Gem"):
                 gid = g.get("gemId", "") or g.get("skillId", "")
                 name = g.get("nameSpec") or g.get("skillId") or "?"
@@ -353,6 +367,7 @@ def parse_build(xml_text: str) -> Build:
                     level=int(g.get("level", "1") or 1),
                     support="Support" in gid or "Support" in (g.get("skillId") or ""),
                     gem_id=gid,
+                    swap=swap,
                 ))
     return Build(title=title, items=items, gems=gems)
 

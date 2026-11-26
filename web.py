@@ -316,7 +316,7 @@ async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], Non
                                   query={"type": rune}, icon=ninja.icon(rune), trend=ninja.trend(rune)))
         send = send_line
         for gem in build.gems:
-            send(pp.price_gem(gem, ninja))
+            mark_swap(send_line, gem.swap)(pp.price_gem(gem, ninja))
         emit({"type": "done"})
 
 
