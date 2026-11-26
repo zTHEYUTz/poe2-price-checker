@@ -256,6 +256,14 @@ async def get_leagues() -> list[dict[str, str]]:
                 for x in r.json()]
 
 
+def mark_swap(send: Callable[[pp.PriceLine], None], swap: bool) -> Callable[[pp.PriceLine], None]:
+    """Wrap ``send`` so every line it emits is tagged as weapon-swap (or not)."""
+    def wrapped(line: pp.PriceLine) -> None:
+        line.swap = swap
+        send(line)
+    return wrapped
+
+
 async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> None:
     """Price a build, streaming progress events through ``emit``."""
     async with make_client() as client:
@@ -269,14 +277,17 @@ async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], Non
         ninja = await get_ninja(league, client)
         emit({"type": "rates", **rates(ninja)})
 
-        def send(line: pp.PriceLine) -> None:
+        def send_line(line: pp.PriceLine) -> None:
             emit({"type": "line", **line.__dict__})
+
+        send = send_line
 
         trade: pp.TradeClient | None = None
         trade_error = ""
         no_rares = bool(opts.get("no_rares"))
         ratio = float(opts.get("ratio") or 0.8)
         for item in build.items:
+            send = mark_swap(send_line, pp.is_swap_slot(item.slot))
             if item.rarity == "UNIQUE":
                 send(pp.price_unique(item, ninja))
             elif item.rarity in ("RARE", "MAGIC") and not no_rares and not trade_error:
@@ -303,6 +314,7 @@ async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], Non
             for rune in item.runes:
                 send(pp.PriceLine("Rune", f"{rune} ({item.slot})", ninja.currency(rune), "poe.ninja",
                                   query={"type": rune}, icon=ninja.icon(rune), trend=ninja.trend(rune)))
+        send = send_line
         for gem in build.gems:
             send(pp.price_gem(gem, ninja))
         emit({"type": "done"})

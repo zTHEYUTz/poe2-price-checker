@@ -111,6 +111,8 @@ class PriceLine:
     icon: str = ""  # item picture URL (poe.ninja or trade site)
     trend: dict[str, Any] | None = None  # 7-day {change, spark} from poe.ninja
     wanted: list[str] = field(default_factory=list)  # the item's mods used for the search
+    swap: bool = False  # belongs to the weapon-swap set (not needed to play the build)
+    low: bool = False   # price is based on very little market data
 
 
 @dataclass
@@ -375,6 +377,14 @@ class NinjaPrices:
             idx = {str(c.get("name", "")).lower(): str(c.get("icon") or "") for c in self.catalog}
             self.__dict__["_icons"] = idx
         return next((idx[n.lower()] for n in names if idx.get(n.lower())), "")
+
+    def listings(self, name: str) -> int | None:
+        """How many listings poe.ninja saw for a unique (None if not a unique)."""
+        idx = self.__dict__.get("_listings")
+        if idx is None:
+            idx = {str(c.get("name", "")).lower(): c["listings"] for c in self.catalog if "listings" in c}
+            self.__dict__["_listings"] = idx
+        return idx.get(name.lower())
 
     def trend(self, *names: str) -> dict[str, Any] | None:
         """7-day price trend ({change, spark}) for the first of ``names`` in the catalog."""
@@ -938,7 +948,8 @@ class TradeClient:
                 return PriceLine(label, detail, statistics.median(prices), "trade", note,
                                  query=q, search_url=trade_search_url(self.league, search_id),
                                  listings=listings[:5], wanted=wanted,
-                                 icon=next((x["icon"] for x in listings if x.get("icon")), ""))
+                                 icon=next((x["icon"] for x in listings if x.get("icon")), ""),
+                                 low=len(prices) < LOW_TRADE_MATCHES)
         return PriceLine(label, detail, None, "trade", "ไม่พบของขายฐานเดียวกันที่ mod ใกล้เคียง",
                          query=attempts[-1][0], wanted=wanted)
 
@@ -946,12 +957,22 @@ class TradeClient:
 # --------------------------------------------------------------------------
 # Orchestration & output
 # --------------------------------------------------------------------------
+LOW_LISTINGS = 5      # fewer poe.ninja listings than this -> unreliable unique price
+LOW_TRADE_MATCHES = 3  # fewer comparable trade listings than this -> unreliable rare price
+
+
+def is_swap_slot(slot: str) -> bool:
+    """PoB names the weapon-swap set "Weapon 1 Swap" / "Weapon 2 Swap"."""
+    return "swap" in slot.lower()
+
+
 def price_unique(item: Item, ninja: NinjaPrices) -> PriceLine:
     val = ninja.uniques.get(item.name.lower())
     return PriceLine(item.slot, item.name, val, "poe.ninja" if val is not None else "-",
                      "" if val is not None else "ไม่พบใน poe.ninja",
                      query=name_query(item.name, item.base, "UNIQUE"),
-                     icon=ninja.icon(item.name), trend=ninja.trend(item.name))
+                     icon=ninja.icon(item.name), trend=ninja.trend(item.name),
+                     low=val is not None and (ninja.listings(item.name) or 0) < LOW_LISTINGS)
 
 
 def fmt(value: float | None, ninja: NinjaPrices) -> str:

@@ -261,6 +261,15 @@
   table.pt tr.low td { opacity: .7; }
   .pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 12px; color: var(--muted); font-size: 14px; }
   .pager .btn:disabled { opacity: .4; cursor: default; }
+  .incl { display: flex; flex-wrap: wrap; gap: 4px 22px; margin-top: 10px; font-size: 14px; }
+  .exclnote { margin-top: 4px; padding: 10px 14px; border-radius: 8px; font-size: 13.5px; color: var(--muted);
+    background: var(--panel); border: 1px dashed var(--line); }
+  .exclnote b { color: var(--text); font-weight: 500; }
+  .tag { display: inline-block; font-size: 11px; line-height: 1; padding: 3px 6px; border-radius: 4px; margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+  .tag.swap { background: #232a36; color: #a9bbd6; border: 1px solid #39465a; }
+  .tag.low { background: #3a2a10; color: #e6c27a; border: 1px solid #6b5020; }
+  tr.excl td { opacity: .55; }
+  tr.excl td.price { text-decoration: line-through; text-decoration-color: #fff6; }
   footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
   @media (max-width: 600px) {
     button.go { margin-left: 0; width: 100%; }
@@ -379,6 +388,11 @@
         <div class="stat"><div class="k">รายการที่มีราคา</div><div class="v" id="tCount">0</div></div>
         <div class="stat"><div class="k">ไม่มีราคา</div><div class="v" id="tMissing">0</div></div>
       </div>
+      <div class="incl">
+        <label class="toggle"><input type="checkbox" id="inclSwap"> นับอาวุธสำรอง (Weapon Swap)</label>
+        <label class="toggle"><input type="checkbox" id="inclLow"> นับราคาที่ข้อมูลน้อย</label>
+      </div>
+      <div class="exclnote" id="exclNote" hidden></div>
       <div class="tablewrap">
         <table>
           <thead><tr><th>ช่อง</th><th>ไอเทม</th><th>แหล่ง</th><th style="text-align:right">ราคา</th><th>ร้าน</th></tr></thead>
@@ -864,6 +878,15 @@ $("itemGo").onclick = async () => {
 let lines = [], ctrl = null, lastBuild = null;
 $("src").value = store.get("poe2src") || "";
 
+/* weapon swap and thin-data prices are left out of the total unless switched on */
+function counted(l) {
+  return (!l.swap || $("inclSwap").checked) && (!l.low || $("inclLow").checked);
+}
+$("inclSwap").checked = store.get("poe2inclSwap") === "1";
+$("inclLow").checked = store.get("poe2inclLow") === "1";
+$("inclSwap").onchange = () => { store.set("poe2inclSwap", $("inclSwap").checked ? "1" : "0"); renderBuild(); };
+$("inclLow").onchange = () => { store.set("poe2inclLow", $("inclLow").checked ? "1" : "0"); renderBuild(); };
+
 function renderBuild() {
   const sorted = [...lines].sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
   const max = Math.max(...lines.map((l) => l.value || 0), 1e-9);
@@ -871,8 +894,10 @@ function renderBuild() {
     const f = fmt(l.value);
     const srcCls = l.source === "trade" ? "trade" : l.source === "poe.ninja" ? "ninja" : "";
     const bar = l.value ? `<div class="bar" style="width:${Math.max(2, (l.value / max) * 100)}%"></div>` : "";
-    return `<tr>
-      <td class="slot">${esc(l.label)}</td>
+    const tags = (l.swap ? `<span class="tag swap" title="อยู่ในชุดอาวุธสำรอง ไม่จำเป็นต่อการเล่นบิว">สำรอง</span>` : "") +
+      (l.low ? `<span class="tag low" title="${l.source === "trade" ? "เจอของเทียบในเทรดน้อยกว่า 3 ชิ้น" : "poe.ninja เห็นคนขายน้อยกว่า 5 รายการ"} — ราคาอาจไม่จริง">ข้อมูลน้อย</span>` : "");
+    return `<tr class="${l.value != null && !counted(l) ? "excl" : ""}">
+      <td class="slot">${esc(l.label)}${tags}</td>
       <td><div class="namecell">${l.icon ? `<img class="thumb" src="${esc(l.icon)}" alt="" loading="lazy">` : `<span class="thumb none"></span>`}<div>${esc(l.detail)}${l.note ? `<div class="note">${esc(l.note)}</div>` : ""}${bar}</div></div></td>
       <td><span class="src ${srcCls}">${esc(l.source === "-" ? "—" : l.source)}</span></td>
       <td class="price ${f ? "" : "none"}">${f ? esc(f[0]) + (f[1] ? `<div class="note">${esc(f[1])}</div>` : "") + trendHtml(l.trend) : "?"}</td>
@@ -886,16 +911,27 @@ function renderBuild() {
     renderBuild();
   }));
   const priced = lines.filter((l) => l.value != null);
-  const t = (priced.length && fmt(priced.reduce((s, l) => s + l.value, 0))) || ["–"];
+  const inTotal = priced.filter(counted);
+  const t = (inTotal.length && fmt(inTotal.reduce((s, l) => s + l.value, 0))) || ["–"];
   $("tDiv").textContent = t[0];
   $("tEx").textContent = t[1] || "";
   $("tCount").textContent = priced.length;
   $("tMissing").textContent = lines.length - priced.length;
+  const notes = [];
+  const sum = (ls) => fmt(ls.reduce((s, l) => s + l.value, 0))[0];
+  const swapOut = priced.filter((l) => l.swap && !$("inclSwap").checked);
+  const lowOut = priced.filter((l) => l.low && !$("inclLow").checked && !(l.swap && !$("inclSwap").checked));
+  if (swapOut.length) notes.push(`ไม่นับอาวุธสำรอง <b>${swapOut.length}</b> รายการ (≈ <b>${esc(sum(swapOut))}</b>)`);
+  if (lowOut.length) notes.push(`ไม่นับราคาที่ข้อมูลน้อย <b>${lowOut.length}</b> รายการ (≈ <b>${esc(sum(lowOut))}</b>) — ควรเช็คราคาจริงในเทรดก่อนซื้อ`);
+  $("exclNote").hidden = !notes.length;
+  $("exclNote").innerHTML = notes.join("<br>");
+  $("inclSwap").parentElement.hidden = !lines.some((l) => l.swap);
+  $("inclLow").parentElement.hidden = !lines.some((l) => l.low);
 }
 
 /* ---------- saved builds ---------- */
 let savedBuilds = [];
-const buildTotal = () => lines.reduce((s, l) => s + (l.value ?? 0), 0);
+const buildTotal = () => lines.filter(counted).reduce((s, l) => s + (l.value ?? 0), 0);
 const checkInfo = () => ({ total: buildTotal(), div: rates.div, ex: rates.ex, checked: true,
   missing: lines.filter((l) => l.value == null).length, count: lines.length,
   rares: !!lastBuild?.rares, blocked: !!lastBuild?.blocked });

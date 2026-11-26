@@ -375,3 +375,22 @@ def test_mark_exchangeable() -> None:
            {"name": "Some Unique"}]
     pp.mark_exchangeable(cat, {"divine", "exalted"})
     assert cat[0]["xid"] == "divine" and "xid" not in cat[1] and "xid" not in cat[2]
+
+
+def test_swap_and_low_flags() -> None:
+    assert pp.is_swap_slot("Weapon 1 Swap") and pp.is_swap_slot("Weapon 2 Swap")
+    assert not pp.is_swap_slot("Weapon 1") and not pp.is_swap_slot("Gloves")
+    ninja = pp.NinjaPrices("Divine Orb", {"divine orb": 1.0}, {"rare unique": 50.0, "common unique": 1.0},
+                           catalog=[{"name": "Rare Unique", "listings": 2}, {"name": "Common Unique", "listings": 40}])
+    few = pp.price_unique(pp.Item("Helmet", "UNIQUE", "Rare Unique", "Base"), ninja)
+    many = pp.price_unique(pp.Item("Helmet", "UNIQUE", "Common Unique", "Base"), ninja)
+    gone = pp.price_unique(pp.Item("Helmet", "UNIQUE", "Not Listed", "Base"), ninja)
+    assert (few.low, many.low, gone.low) == (True, False, False)
+
+
+def test_mark_swap_wrapper() -> None:
+    import web
+    sent: list = []
+    line = pp.PriceLine("Weapon 1 Swap", "X", 1.0, "poe.ninja")
+    web.mark_swap(sent.append, True)(line)
+    assert sent[0].swap is True
