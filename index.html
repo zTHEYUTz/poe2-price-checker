@@ -211,6 +211,13 @@
   .savebar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; }
   .savebar input { flex: 1 1 220px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
   .empty { color: var(--muted); text-align: center; padding: 28px 16px; border: 1px dashed var(--line); border-radius: 10px; }
+  /* matching against the searched item */
+  #tip .ok::before { content: "✓ "; color: var(--ok); font-weight: 700; }
+  #tip .nomatch { opacity: .75; }
+  #tip .matchbar { padding: 6px 12px; font-size: 12.5px; background: #12201a; color: #9fe0b5; border-bottom: 1px solid #2a231b; }
+  #tip .matchbar.part { background: #241d10; color: #e6c27a; }
+  .lmeta { display: block; font-size: 12px; color: var(--muted); }
+  .lmeta .full { color: var(--ok); } .lmeta .part { color: #e6c27a; }
   footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
   @media (max-width: 600px) {
     button.go { margin-left: 0; width: 100%; }
@@ -421,7 +428,8 @@ function tierBadge(m) {
 function tipHtml(x, r) {
   const it = x.item || {};
   const rar = (it.rarity || "").toLowerCase();
-  const head = `<div class="th">${it.name ? `<div class="n">${esc(it.name)}</div>` : ""}<div class="b${it.name ? "" : " n"}">${esc(it.base || "")}</div></div>`;
+  const head = `<div class="th">${it.name ? `<div class="n">${esc(it.name)}</div>` : ""}<div class="b${it.name ? "" : " n"}">${esc(it.base || "")}</div></div>` +
+    (x.wanted ? `<div class="matchbar${x.matched >= x.wanted ? "" : " part"}">${x.matched >= x.wanted ? "✓ มี mod ครบทุกตัวที่ของคุณมี" : `มี mod ตรงกับของคุณ ${x.matched}/${x.wanted} ตัว`} (✓ = ตรง)</div>` : "");
   const props = [...(it.props || [])];
   if (it.ilvl) props.push(`Item Level: ${it.ilvl}`);
   const sections = [];
@@ -432,7 +440,7 @@ function tipHtml(x, r) {
   const groups = [["enchant", "rune"], ["implicit"], ["fractured", "explicit", "desecrated", "crafted"]];
   for (const g of groups) {
     const ms = (it.mods || []).filter((m) => g.includes(m.kind));
-    if (ms.length) sections.push(ms.map((m) => `<div class="m-${esc(m.kind)}">${tierBadge(m)}${esc(m.text)}${m.range ? `<span class="rng">(${esc(m.range)})</span>` : ""}</div>`).join(""));
+    if (ms.length) sections.push(ms.map((m) => `<div class="m-${esc(m.kind)}${m.match === true ? " ok" : m.match === false ? " nomatch" : ""}">${tierBadge(m)}${esc(m.text)}${m.range ? `<span class="rng">(${esc(m.range)})</span>` : ""}</div>`).join(""));
   }
   if (it.corrupted) sections.push(`<div class="corr">Corrupted</div>`);
   if (!sections.length) sections.push(`<div class="pr">ไม่มีข้อมูล mod</div>`);
@@ -472,6 +480,16 @@ function bindTips(el, ls, r) {
 document.addEventListener("click", hideTip);
 addEventListener("scroll", hideTip, { passive: true });
 
+function listingMeta(x) {
+  const it = x.item || {};
+  const bits = [];
+  if (it.base) bits.push(esc(it.base));
+  if (it.ilvl) bits.push("iLvl " + esc(it.ilvl));
+  if (it.corrupted) bits.push('<span style="color:var(--bad)">Corrupted</span>');
+  if (x.wanted) bits.push(`<span class="${x.matched >= x.wanted ? "full" : "part"}">ตรง ${x.matched}/${x.wanted} mod</span>`);
+  return bits.length ? `<span class="lmeta">${bits.join(" · ")}</span>` : "";
+}
+
 function shopPanel(line, el, r) {
   if (!el) return;
   if (!line.query) { el.innerHTML = ""; return; }
@@ -481,7 +499,7 @@ function shopPanel(line, el, r) {
   let html = `<div class="top">`;
   if (best) {
     const f = best.value != null ? fmt(best.value, r) : null;
-    html += `${best.icon ? `<img class="lthumb lg" src="${esc(best.icon)}" alt="" tabindex="0" data-tip="0">` : ""}<div class="who">ร้านถูกสุด: <b class="tipme" tabindex="0" data-tip="0">${esc(best.seller)}</b> — <b>${esc(priceText(best))}</b>${best.item ? `<span class="tiphint">(ชี้ที่รูปหรือชื่อร้านเพื่อดู mod)</span>` : ""}${f ? ` <span class="note">≈ ${esc(f.join(" / "))}</span>` : ""}
+    html += `${best.icon ? `<img class="lthumb lg" src="${esc(best.icon)}" alt="" tabindex="0" data-tip="0">` : ""}<div class="who">ร้านถูกสุด: <b class="tipme" tabindex="0" data-tip="0">${esc(best.seller)}</b> — <b>${esc(priceText(best))}</b>${best.item ? `<span class="tiphint">(ชี้ที่รูปหรือชื่อร้านเพื่อดู mod)</span>` : ""}${listingMeta(best)}${f ? ` <span class="note">≈ ${esc(f.join(" / "))}</span>` : ""}
       ${line.checkedAt ? `<span class="note">อัปเดต ${esc(line.checkedAt)}</span>` : ""}</div>
       <a class="btn warp" href="${esc(line.search_url)}" target="_blank" rel="noopener">วาปไปร้าน ↗</a>
       ${best.whisper ? `<button class="btn" data-act="copy">คัดลอกข้อความซื้อ</button>` : ""}`;
@@ -492,7 +510,7 @@ function shopPanel(line, el, r) {
   }
   html += `<button class="btn" data-act="refresh">${refreshLabel}</button></div>`;
   if (ls.length > 1) {
-    html += `<div class="others">` + ls.slice(1).map((x, i) => `<div class="o">${x.icon ? `<img class="lthumb" src="${esc(x.icon)}" alt="" loading="lazy" tabindex="0" data-tip="${i + 1}">` : `<span class="lthumb none"></span>`}<span><span class="tipme" tabindex="0" data-tip="${i + 1}">${esc(x.seller)}</span> — ${esc(priceText(x))}</span><span class="acts"><a class="btn sm warp" href="${esc(line.search_url)}" target="_blank" rel="noopener" title="เปิดเทรดไซต์ — ร้านนี้อยู่อันดับ ${i + 2} ในรายการ">วาปไปร้าน ↗</a>${x.whisper ? `<button class="btn sm" data-copy="${i + 1}">คัดลอกข้อความซื้อ</button>` : ""}</span></div>`).join("") + `</div>`;
+    html += `<div class="others">` + ls.slice(1).map((x, i) => `<div class="o">${x.icon ? `<img class="lthumb" src="${esc(x.icon)}" alt="" loading="lazy" tabindex="0" data-tip="${i + 1}">` : `<span class="lthumb none"></span>`}<span><span class="tipme" tabindex="0" data-tip="${i + 1}">${esc(x.seller)}</span> — ${esc(priceText(x))}${listingMeta(x)}</span><span class="acts"><a class="btn sm warp" href="${esc(line.search_url)}" target="_blank" rel="noopener" title="เปิดเทรดไซต์ — ร้านนี้อยู่อันดับ ${i + 2} ในรายการ">วาปไปร้าน ↗</a>${x.whisper ? `<button class="btn sm" data-copy="${i + 1}">คัดลอกข้อความซื้อ</button>` : ""}</span></div>`).join("") + `</div>`;
   }
   if (best) html += `<div class="shopmsg">"วาปไปร้าน" จะเปิดเทรดไซต์ทางการ เรียงราคาถูกสุดก่อน → กด <b>Travel to Hideout</b> ที่ร้านที่เลือก (ร้านที่ 2–5 อยู่ถัดลงไปตามลำดับราคา) (ต้องล็อกอินเว็บ pathofexile.com และเปิดเกมไว้) · ถ้าร้านขายไปแล้ว กด "รีเฟรช" เพื่อหาร้านใหม่</div>`;
   html += `<div class="shopmsg" data-msg></div>`;
@@ -507,7 +525,7 @@ function shopPanel(line, el, r) {
     btn.disabled = true; msg.textContent = "กำลังหาร้านที่ถูกที่สุด… (เทรดไซต์จำกัดความถี่ อาจรอสักครู่)";
     let rr = r;
     try {
-      await streamPost("/api/listings", { league: $("league").value, query: line.query }, (ev) => {
+      await streamPost("/api/listings", { league: $("league").value, query: line.query, wanted: line.wanted || [] }, (ev) => {
         if (ev.type === "rates") rr = ev;
         else if (ev.type === "status") msg.textContent = ev.msg;
         else if (ev.type === "error") throw new Error(ev.msg);

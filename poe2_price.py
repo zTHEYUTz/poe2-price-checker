@@ -110,6 +110,7 @@ class PriceLine:
     listings: list[dict[str, Any]] = field(default_factory=list)
     icon: str = ""  # item picture URL (poe.ninja or trade site)
     trend: dict[str, Any] | None = None  # 7-day {change, spark} from poe.ninja
+    wanted: list[str] = field(default_factory=list)  # the item's mods used for the search
 
 
 @dataclass
@@ -581,6 +582,46 @@ def item_summary(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_BASES: set[str] = set()
+_BASES_LOCK = threading.Lock()
+
+
+def resolve_base(name: str, base: str, bases: set[str]) -> str:
+    """The item's real base type.
+
+    Rare items carry it on their own line; magic items only have a name like
+    "Hale Vaal Gloves of the Penguin", so we pick the longest known base type
+    contained in it. Returns "" when nothing matches.
+    """
+    if base in bases:
+        return base
+    text = f"{name} {base}"
+    found = [b for b in bases if b and re.search(rf"(?<!\w){re.escape(b)}(?!\w)", text)]
+    return max(found, key=len) if found else ""
+
+
+def mark_matches(listings: list[dict[str, Any]], wanted: list[str]) -> None:
+    """Flag which of each listing's mods the searched item also has.
+
+    Sets ``match`` on every explicit/implicit mod and ``matched``/``wanted`` counts on
+    the listing, so the page can show "ตรง 3/4 mod" and tick the matching lines.
+    """
+    want = {normalize_stat(w) for w in wanted if w}
+    if not want:
+        return
+    for x in listings:
+        hit: set[str] = set()
+        for m in (x.get("item") or {}).get("mods") or []:
+            if m.get("kind") not in ("explicit", "implicit", "fractured", "desecrated", "crafted"):
+                continue
+            t = normalize_stat(m.get("text", ""))
+            m["match"] = t in want
+            if m["match"]:
+                hit.add(t)
+        x["matched"] = len(hit)
+        x["wanted"] = len(want)
+
+
 def normalize_stat(text: str) -> str:
     """Turn a mod line or trade stat text into a comparable template."""
     t = text.lower().replace("+#", "#")
@@ -763,6 +804,18 @@ class TradeClient:
             return data
         raise RuntimeError("trade API rate limited too many times")
 
+    async def bases(self) -> set[str]:
+        """All item base types from the trade site (cached for the process)."""
+        with _BASES_LOCK:
+            if _BASES:
+                return _BASES
+        data = await self._request("GET", f"{TRADE}/data/items", 1.0)
+        found = {str(e["type"]) for g in data.get("result", []) for e in g.get("entries", [])
+                 if e.get("type") and not e.get("name")}
+        with _BASES_LOCK:
+            _BASES.update(found)
+            return _BASES
+
     async def load_stats(self) -> None:
         data = await self._request("GET", f"{TRADE}/data/stats", 1.0)
         for group in data.get("result", []):
@@ -818,33 +871,48 @@ class TradeClient:
     async def price_item(self, item: Item, ratio: float, max_mods: int,
                          ninja: NinjaPrices) -> PriceLine:
         mods = [m for m in item.mods if m.kind in ("explicit", "implicit")]
-        filters = [f for m in mods if (f := self.stat_filter(m, ratio))]
-        # numeric mods first: they usually define the value
-        filters = filters[:max_mods]
+        pairs = [(m, f) for m in mods if (f := self.stat_filter(m, ratio))][:max_mods]
+        filters = [f for _, f in pairs]
+        wanted = [m.text for m, _ in pairs]
+        # same base type on every attempt: same mods on another kind of item is not the same item
+        base = resolve_base(item.name, item.base, await self.bases())
         label = f"{item.slot}"
-        detail = f"{item.rarity.title()} {item.base}".strip()
+        detail = f"{item.rarity.title()} {base or item.base}".strip()
         if not filters:
             return PriceLine(label, detail, None, "-", "จับคู่ mod กับเทรดไม่ได้")
 
-        attempts: list[dict[str, Any]] = [
-            {"type": item.base, "stats": [{"type": "and", "filters": filters}]},
-            {"stats": [{"type": "count", "filters": filters,
-                        "value": {"min": max(1, len(filters) - 1)}}]},
-            {"stats": [{"type": "count", "filters": filters,
-                        "value": {"min": max(1, len(filters) // 2)}}]},
-        ]
-        for i, q in enumerate(attempts):
-            q["filters"] = {"type_filters": {"filters": {"rarity": {"option": "nonunique"}}}}
+        common: dict[str, Any] = {"type_filters": {"filters": {"rarity": {"option": "nonunique"}}}}
+        if not item.corrupted:  # corrupted copies sell cheaper and can't be modified
+            common["misc_filters"] = {"filters": {"corrupted": {"option": "false"}}}
+        steps = [("and", len(filters), "mod ตรงทั้งหมด"),
+                 ("count", max(1, len(filters) - 1), "ผ่อน 1 mod"),
+                 ("count", max(1, len(filters) // 2), "ผ่อนครึ่งหนึ่ง")]
+        attempts: list[tuple[dict[str, Any], str]] = []
+        for kind, need, note in steps:
+            group: dict[str, Any] = {"type": kind, "filters": filters}
+            if kind == "count":
+                if need >= len(filters) or (attempts and need == attempts[-1][0]["stats"][0].get("value", {}).get("min")):
+                    continue  # same as a previous attempt
+                group["value"] = {"min": need}
+            q: dict[str, Any] = {"stats": [group], "filters": common}
+            if base:
+                q["type"] = base
+            attempts.append((q, note))
+
+        for q, note in attempts:
             search_id, listings = await self.search(q, ninja)
+            mark_matches(listings, wanted)
             prices = [x["value"] for x in listings if x["value"] is not None]
             if prices:
-                note = ["mod ตรงทั้งหมด", "ผ่อน 1 mod", "ผ่อนครึ่งหนึ่ง"][i]
                 note += f", {len(prices)} รายการ"
+                if not base:
+                    note += " · ไม่รู้ฐานไอเทม ผลอาจปนของชนิดอื่น"
                 return PriceLine(label, detail, statistics.median(prices), "trade", note,
                                  query=q, search_url=trade_search_url(self.league, search_id),
-                                 listings=listings[:5],
+                                 listings=listings[:5], wanted=wanted,
                                  icon=next((x["icon"] for x in listings if x.get("icon")), ""))
-        return PriceLine(label, detail, None, "trade", "ไม่พบของขายใกล้เคียง", query=attempts[-1])
+        return PriceLine(label, detail, None, "trade", "ไม่พบของขายฐานเดียวกันที่ mod ใกล้เคียง",
+                         query=attempts[-1][0], wanted=wanted)
 
 
 # --------------------------------------------------------------------------

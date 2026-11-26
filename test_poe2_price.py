@@ -317,3 +317,25 @@ def test_item_summary_combined_affixes() -> None:
     (m,) = pp.item_summary(raw)["mods"]
     assert (m["affix"], m["tier"], m["name"]) == ("prefix", "P1+P3", "Seraphim's + Thickened")
     assert "range" not in m
+
+
+def test_resolve_base() -> None:
+    bases = {"Vaal Gloves", "Gloves", "Gold Ring", "Ring", "Flax Sandals"}
+    assert pp.resolve_base("Doom Grip", "Vaal Gloves", bases) == "Vaal Gloves"
+    # magic item: base hidden inside the name, longest match wins
+    assert pp.resolve_base("Hale Vaal Gloves of the Penguin", "Hale Vaal Gloves of the Penguin", bases) == "Vaal Gloves"
+    assert pp.resolve_base("Sturdy Gold Ring of Fire", "Sturdy Gold Ring of Fire", bases) == "Gold Ring"
+    assert pp.resolve_base("Mystery", "Mystery", bases) == ""
+
+
+def test_mark_matches() -> None:
+    listing = {"item": {"mods": [
+        {"text": "+148 to maximum Life", "kind": "explicit"},
+        {"text": "+39% to Fire Resistance", "kind": "explicit"},
+        {"text": "125% increased Energy Shield", "kind": "explicit"},
+        {"text": "18% increased Armour", "kind": "rune"},
+    ]}}
+    pp.mark_matches([listing], ["+85 to maximum Life", "+32% to Fire Resistance", "+28% to Cold Resistance"])
+    flags = [m.get("match") for m in listing["item"]["mods"]]
+    assert flags == [True, True, False, None]  # rune mods are not compared
+    assert (listing["matched"], listing["wanted"]) == (2, 3)

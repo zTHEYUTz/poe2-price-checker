@@ -222,6 +222,9 @@ async def find_listings(opts: dict[str, Any], emit: Callable[[dict[str, Any]], N
         trade = await make_trade(client, league)
         try:
             search_id, listings = await trade.search(query, ninja, fresh=True)
+            wanted = opts.get("wanted")
+            if isinstance(wanted, list):
+                pp.mark_matches(listings, [str(w) for w in wanted][:20])
         finally:
             _trade_last[0] = trade._last
         emit({"type": "listings", "search_url": pp.trade_search_url(league, search_id),
