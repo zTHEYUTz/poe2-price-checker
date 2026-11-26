@@ -82,7 +82,8 @@ def test_decode_invalid() -> None:
 def test_parse_build() -> None:
     b = pp.parse_build(XML)
     assert b.title == "Infernalist lvl 92"
-    assert [i.slot for i in b.items] == ["Helmet", "Gloves", "Tree Jewel"]
+    assert [i.slot for i in b.items] == ["Helmet", "Gloves", "Tree Jewel 1"]
+    assert b.items[2].socket == 123
     gloves = b.items[1]
     assert gloves.rarity == "RARE" and gloves.base == "Vaal Gloves"
     assert gloves.runes == ["Greater Rune of Leadership"]
@@ -445,3 +446,54 @@ def test_compact_tree_group_list() -> None:
            "groups": [{"x": 1, "y": 2}, {"x": 30, "y": 40}],  # group 2 is at index 1
            "nodes": {"7": {"group": 2, "orbit": 0, "orbitIndex": 0, "name": "N"}}}
     assert pp.compact_tree(raw)["nodes"][0][:3] == [7, 30, 40]
+
+
+def test_rune_lines_are_not_implicits() -> None:
+    # PoB2 writes rune/enchant lines first and counts them in "Implicits: N"
+    text = """Rarity: RARE
+Dire Keep
+Runeforged Grinning Mask
+Rune: Iron Rune
+Rune: Iron Rune
+Implicits: 3
+{rune}+22% to Cold Resistance
+{rune}+18% to Lightning Resistance
++10 to Strength
++95 to maximum Mana
++38% to Fire Resistance"""
+    item = pp.parse_item_text(text, "Helmet")
+    kinds = [(m.kind, m.text) for m in item.mods]
+    assert kinds[:3] == [("rune", "+22% to Cold Resistance"), ("rune", "+18% to Lightning Resistance"),
+                         ("implicit", "+10 to Strength")]
+    assert kinds[3:] == [("explicit", "+95 to maximum Mana"), ("explicit", "+38% to Fire Resistance")]
+
+
+def test_jewels_get_own_slots() -> None:
+    xml = XML.replace('<Sockets><Socket nodeId="123" itemId="3"/></Sockets>',
+                      '<Sockets><Socket nodeId="123" itemId="3"/><Socket nodeId="456" itemId="4"/></Sockets>')
+    jewels = [(i.slot, i.socket) for i in pp.parse_build(xml).items if "Jewel" in i.slot]
+    assert jewels == [("Tree Jewel 1", 123), ("Tree Jewel 2", 456)]
+
+
+AFFIX_LUA = """return {
+	["Life1"] = { type = "Prefix", affix = "Hale", "+(10-19) to maximum Life", statOrder = { 1 }, level = 1, group = "Life", },
+	["Life2"] = { type = "Prefix", affix = "Healthy", "+(20-29) to maximum Life", statOrder = { 1 }, level = 10, group = "Life", },
+	["Fire1"] = { type = "Suffix", affix = "of the Whelpling", "+(6-10)% to Fire Resistance", statOrder = { 2 }, level = 1, group = "Fire", },
+	["RarityP"] = { type = "Prefix", affix = "Magpie's", "(8-12)% increased Rarity of Items found", statOrder = { 3 }, level = 1, group = "R1", },
+	["RarityS"] = { type = "Suffix", affix = "of Plunder", "(6-10)% increased Rarity of Items found", statOrder = { 4 }, level = 1, group = "R2", },
+	["Implicit"] = { type = "Corrupted", affix = "", "+1 to Level of all Skills", statOrder = { 5 }, level = 1, group = "X", },
+}"""
+
+
+def test_affix_db() -> None:
+    db = pp.AffixDB(AFFIX_LUA)
+    assert db.classify("+25 to maximum Life") == ("prefix", "Healthy")
+    assert db.classify("+8% to Fire Resistance") == ("suffix", "of the Whelpling")
+    assert db.classify("+999 to maximum Life") == ("prefix", "")  # out of range: type still clear
+    assert db.classify("11% increased Rarity of Items found") == ("prefix", "Magpie's")  # only prefix range fits
+    assert db.classify("9% increased Rarity of Items found") is None  # both fit -> unclear
+    assert db.classify("+1 to Level of all Skills") is None and db.classify("Unknown 5") is None
+    item = pp.Item("Helmet", "RARE", "X", "Y", mods=[pp.Mod("+25 to maximum Life", "explicit"),
+                                                      pp.Mod("+8% to Fire Resistance", "rune")])
+    db.annotate(item)
+    assert (item.mods[0].affix, item.mods[0].name) == ("prefix", "Healthy") and item.mods[1].affix == ""

@@ -324,6 +324,15 @@
   .ptchips span { font-size: 12.5px; padding: 4px 10px; border-radius: 99px; background: var(--panel2); border: 1px solid var(--line); cursor: help; }
   .ptchips span.k2 { border-color: #a07a3a; color: var(--gold); }
   .ptchips span.w2 { border-color: #4b7fc4; }
+  /* runes in an item, jewels in the tree */
+  .eq .rs { position: absolute; left: 4px; bottom: 4px; display: flex; gap: 3px; pointer-events: none; }
+  .eq .rs i { width: 9px; height: 9px; border-radius: 50%; background: #7fb3ff; box-shadow: 0 0 0 1px #000, 0 0 4px #7fb3ff88; }
+  .eq .rs i.none { background: #2a2a2a; box-shadow: 0 0 0 1px #555; }
+  #tip .sechd { font-size: 11px; letter-spacing: .05em; color: #8a8273; margin-bottom: 2px; }
+  #tip .rrow { display: flex; justify-content: space-between; gap: 12px; color: #b8c4e0; }
+  #tip .rrow b { color: var(--gold); font-weight: 600; white-space: nowrap; }
+  #ptSvg circle.jw { fill: #2f8f5b; stroke: #b6f5cf; stroke-width: 16; }
+  #ptSvg image { pointer-events: none; }
   footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
   @media (max-width: 600px) {
     button.go { margin-left: 0; width: 100%; }
@@ -981,7 +990,9 @@ function eqCell(slot, it, extraCls = "") {
   const f = l && l.value != null ? fmt(l.value) : null;
   const pc = l ? (f ? `<span class="pc${counted(l) ? "" : " excl"}">${esc(f[0].replace(/ /, "\u00a0"))}</span>` : `<span class="pc no">?</span>`) : "";
   const body = icon ? `<img src="${esc(icon)}" alt="" loading="lazy">` : `<span class="nm">${esc(it.rarity === "UNIQUE" ? it.name : it.base || it.name)}</span>`;
-  return `<div class="eq has r-${esc(rar)} ${extraCls}" tabindex="0" data-eq="${esc(it.slot)}">${body}${pc}</div>`;
+  const rs = it.runes && it.runes.length
+    ? `<span class="rs" title="รูน">${it.runes.map((r) => `<i class="${/^none$/i.test(r) ? "none" : ""}"></i>`).join("")}</span>` : "";
+  return `<div class="eq has r-${esc(rar)} ${extraCls}" tabindex="0" data-eq="${esc(it.slot)}">${body}${rs}${pc}</div>`;
 }
 
 function renderEquip() {
@@ -1026,11 +1037,21 @@ function showEqTip(target, it) {
     : `<div class="n">${esc(it.name)}</div>`}</div>`;
   const secs = [`<div class="pr">${esc(it.slot)}</div>`];
   const group = (kinds) => (it.mods || []).filter((m) => kinds.includes(m.kind));
-  for (const kinds of [["enchant", "rune"], ["implicit"], ["explicit", "crafted"]]) {
+  for (const kinds of [["enchant"], ["implicit"], ["explicit", "crafted"]]) {
     const ms = group(kinds);
     if (ms.length) secs.push(ms.map((m) => `<div class="m-${esc(m.kind)}">${tierBadge(m)}${esc(m.text)}</div>`).join(""));
   }
-  if (it.runes && it.runes.length) secs.push(it.runes.map((r) => `<div class="m-rune">◆ ${esc(r)}</div>`).join(""));
+  const runes = (it.runes || []).filter((r) => !/^none$/i.test(r));
+  const runeMods = group(["rune"]);
+  if (runes.length || runeMods.length) {
+    const priced = runes.map((r) => {
+      const l = lines.find((x) => x.label === "Rune" && x.detail === `${r} (${it.slot})`);
+      const f = l && l.value != null ? fmt(l.value)[0] : "?";
+      return `<div class="rrow"><span>◆ ${esc(r)}</span><b>${esc(f)}</b></div>`;
+    }).join("");
+    secs.push(`<div class="sechd">รูนที่ใส่ — ราคาแยกจากตัวของ ไม่ได้ใช้ค้นราคาตัวของ</div>${priced}` +
+      runeMods.map((m) => `<div class="m-rune">${esc(m.text)}</div>`).join(""));
+  }
   if (it.corrupted) secs.push(`<div class="corr">Corrupted</div>`);
   let cost = "";
   if (l) {
@@ -1088,10 +1109,16 @@ function renderTree(fit) {
     if (cls === "e") edges += `<path class="e" d="${d}"/>`; else onEdges += `<path class="${cls}" d="${d}"/>`;
   }
   let nodes = "";
+  const jewelAt = new Map(buildItems.filter((it) => it.socket).map((it) => [it.socket, it]));
   for (const n of treeData.nodes) {
     if (!main(n)) continue;
     const c = st(n[0]);
-    nodes += `<circle data-id="${n[0]}" class="k${n[3]} ${c}" cx="${n[1]}" cy="${n[2]}" r="${NODE_R[n[3]] || 32}"/>`;
+    const jw = n[3] === 3 && jewelAt.get(n[0]);
+    if (jw) {
+      const jl = lineForSlot(jw.slot);
+      nodes += `<circle data-id="${n[0]}" class="k3 jw" cx="${n[1]}" cy="${n[2]}" r="90"/>` +
+        (jl && jl.icon ? `<image href="${esc(jl.icon)}" x="${n[1] - 80}" y="${n[2] - 80}" width="160" height="160"/>` : "");
+    } else nodes += `<circle data-id="${n[0]}" class="k${n[3]} ${c}" cx="${n[1]}" cy="${n[2]}" r="${NODE_R[n[3]] || 32}"/>`;
   }
   $("ptSvg").innerHTML = `<g>${edges}</g><g>${onEdges}</g><g>${nodes}</g>`;
 
@@ -1170,6 +1197,8 @@ function showNodeTip(target, n, on, w2) {
       applyView(); return;
     }
     const c = e.target.closest && e.target.closest("circle[data-id]");
+    const jw = c && buildItems.find((it) => it.socket === +c.dataset.id);
+    if (jw) { showEqTip(c, jw); return; }
     if (c && treeData) {
       const n = treeData.byId.get(+c.dataset.id);
       const alloc = new Set(treeInfo.nodes || []), set2 = new Set(treeInfo.set2 || []);
@@ -1438,13 +1467,16 @@ $("go").onclick = async () => {
     await streamPost("/api/price", { source, league: $("league").value, no_rares: !$("rares").checked, ratio: parseFloat($("ratio").value) || 0.8 }, (ev) => {
       if (ev.type === "status") $("statusText").textContent = ev.msg;
       else if (ev.type === "tree") loadTree(ev);
-      else if (ev.type === "items") { buildItems = ev.items || []; weaponSet = 1; renderEquip(); }
+      else if (ev.type === "items") { buildItems = ev.items || []; weaponSet = 1; renderEquip(); if (treeData) renderTree(false); }
       else if (ev.type === "build") {
         $("meta").textContent = `บิว ${ev.title} · ลีก ${ev.league} · ไอเทม ${ev.items} ชิ้น · เจม ${ev.gems} เม็ด`;
         lastBuild.title = ev.title; lastBuild.league = ev.league;
         $("result").style.display = "block";
       } else if (ev.type === "rates") { rates = ev; renderBuild(); }
-      else if (ev.type === "line") { ev.idx = lines.length; lines.push(ev); renderBuild(); }
+      else if (ev.type === "line") {
+        ev.idx = lines.length; lines.push(ev); renderBuild();
+        if (treeData && /^Tree Jewel/.test(ev.label)) renderTree(false);  // show the jewel's picture in its socket
+      }
       else if (ev.type === "error") showErr($("err"), "ผิดพลาด: " + ev.msg);
       else if (ev.type === "warn") { showErr($("err"), "⚠ " + ev.msg); if (lastBuild) lastBuild.blocked = true; }
       else if (ev.type === "done") afterBuildCheck();

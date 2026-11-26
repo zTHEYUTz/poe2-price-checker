@@ -116,6 +116,34 @@ _trees: dict[str, dict[str, Any]] = {}
 _tree_lock = threading.Lock()
 
 
+MODS_URL = "https://raw.githubusercontent.com/PathOfBuildingCommunity/PathOfBuilding-PoE2/dev/src/Data/ModItem.lua"
+_affix_db: list[pp.AffixDB] = []
+
+
+async def get_affix_db() -> pp.AffixDB | None:
+    """Prefix/suffix lookup from PoB2's mod data (downloaded once, cached; None if unavailable)."""
+    if _affix_db:
+        return _affix_db[0]
+    path = TREE_DIR / "ModItem.lua"
+    try:
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+        else:
+            async with make_client() as client:
+                r = await client.get(MODS_URL, follow_redirects=True)
+                r.raise_for_status()
+                text = r.text
+            TREE_DIR.mkdir(exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+    except (httpx.HTTPError, OSError):
+        return None
+    db = pp.AffixDB(text)
+    with _tree_lock:
+        if not _affix_db:
+            _affix_db.append(db)
+    return _affix_db[0]
+
+
 async def get_tree(version: str) -> dict[str, Any]:
     """Compact passive tree for a PoB tree version, e.g. "0_5" (cached on disk and in memory)."""
     if not re.fullmatch(r"\d{1,2}_\d{1,2}", version):
@@ -221,6 +249,9 @@ async def get_catalog(league: str) -> dict[str, Any]:
 async def price_item_text(opts: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> None:
     """Price a single item copied from the game, streaming progress events."""
     item, gem_level = pp.parse_game_item(str(opts.get("text", "")))
+    db = await get_affix_db()
+    if db:
+        db.annotate(item)  # Ctrl+Alt+C already carries prefix/suffix; plain Ctrl+C gets it here
     async with make_client() as client:
         league = await resolve_league(str(opts.get("league") or ""), client)
         emit({"type": "item", "league": league, "name": item.name, "base": item.base,
@@ -305,10 +336,14 @@ async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], Non
               "items": len(build.items), "gems": len(build.gems)})
         if build.tree.get("nodes"):
             emit({"type": "tree", **build.tree})
+        db = await get_affix_db()
+        if db:
+            for it in build.items:
+                db.annotate(it)
         # full item details for the equipment view (slot, rarity, mods, runes)
         emit({"type": "items", "items": [{
             "slot": it.slot, "rarity": it.rarity, "name": it.name, "base": it.base,
-            "corrupted": it.corrupted, "runes": it.runes,
+            "corrupted": it.corrupted, "runes": it.runes, "socket": it.socket,
             "mods": [m.__dict__ for m in it.mods]} for it in build.items]})
         emit({"type": "status", "msg": "กำลังดึงราคาจาก poe.ninja…"})
         ninja = await get_ninja(league, client)

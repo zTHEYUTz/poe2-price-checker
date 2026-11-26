@@ -70,6 +70,7 @@ class Mod:
     kind: str  # implicit | explicit | enchant | rune | crafted
     affix: str = ""  # prefix | suffix (known from advanced copy / trade data)
     tier: str = ""   # e.g. "P6", "S2"
+    name: str = ""   # affix name, e.g. "Hale" or "of the Brute"
 
 
 @dataclass
@@ -83,6 +84,7 @@ class Item:
     mods: list[Mod] = field(default_factory=list)
     runes: list[str] = field(default_factory=list)
     corrupted: bool = False
+    socket: int = 0  # passive-tree node id, for jewels socketed in the tree
 
 
 @dataclass
@@ -218,13 +220,15 @@ def parse_item_text(text: str, slot: str) -> Item:
         text_clean, tags = _clean_mod(ln)
         if not text_clean:
             continue
-        if implicit_left > 0:
-            kind = "implicit"
+        in_implicits = implicit_left > 0
+        if in_implicits:
             implicit_left -= 1
+        if "rune" in tags:
+            kind = "rune"
         elif "enchant" in tags:
             kind = "enchant"
-        elif "rune" in tags:
-            kind = "rune"
+        elif in_implicits:
+            kind = "implicit"
         elif "crafted" in tags:
             kind = "crafted"
         else:
@@ -343,11 +347,16 @@ def parse_build(xml_text: str) -> Build:
             idx = int(spec_id) - 1 if spec_id.isdigit() else 0
             spec = specs[idx] if 0 <= idx < len(specs) else (specs[0] if specs else None)
             if spec is not None:
+                n_jewel = 0
                 for sock in spec.iter("Socket"):
                     iid = sock.get("itemId", "0")
                     if iid != "0" and iid in by_id and iid not in seen:
                         seen.add(iid)
-                        items.append(parse_item_text(by_id[iid], "Tree Jewel"))
+                        n_jewel += 1
+                        jewel = parse_item_text(by_id[iid], f"Tree Jewel {n_jewel}")
+                        node = sock.get("nodeId", "")
+                        jewel.socket = int(node) if node.isdigit() else 0
+                        items.append(jewel)
 
     gems: list[Gem] = []
     skills_el = root.find("Skills")
@@ -766,6 +775,68 @@ def mark_matches(listings: list[dict[str, Any]], wanted: list[str]) -> None:
                 hit.add(t)
         x["matched"] = len(hit)
         x["wanted"] = len(want)
+
+
+RANGE_RE = re.compile(r"\(\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*\)")
+AFFIX_LINE = re.compile(r'^\s*\["[^"]+"\]\s*=\s*\{\s*type\s*=\s*"(Prefix|Suffix)",\s*affix\s*=\s*"((?:[^"\\]|\\.)*)",(.*?)statOrder\s*=')
+QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+class AffixDB:
+    """Tells whether an item mod line is a prefix or a suffix.
+
+    Built from Path of Building 2's ``Data/ModItem.lua`` (one mod per line:
+    type, affix name and its text with value ranges). A line is labelled only
+    when the answer is clear: every candidate mod with that text (and, when
+    several exist, whose value range fits the item's number) has the same type.
+    """
+
+    def __init__(self, lua_text: str) -> None:
+        # normalized text -> [(type, affix name, [(lo, hi), ...], lines in the mod)]
+        self.index: dict[str, list[tuple[str, str, list[tuple[float, float]], int]]] = {}
+        for line in lua_text.splitlines():
+            m = AFFIX_LINE.match(line)
+            if not m:
+                continue
+            typ, name, body = m.group(1).lower(), m.group(2), m.group(3)
+            texts = QUOTED.findall(body)
+            for t in texts:
+                ranges = [(abs(float(a)), abs(float(b))) for a, b in RANGE_RE.findall(t)]
+                tmpl = RANGE_RE.sub("#", t)
+                ranges += [(abs(float(x)), abs(float(x))) for x in NUM_RE.findall(tmpl)]  # fixed numbers
+                self.index.setdefault(normalize_stat(tmpl), []).append((typ, name, ranges, len(texts)))
+
+    def classify(self, text: str) -> tuple[str, str] | None:
+        """(prefix|suffix, affix name) for an explicit mod line, or None if unclear."""
+        cands = self.index.get(normalize_stat(text))
+        if not cands:
+            return None
+        vals = [abs(float(x)) for x in NUM_RE.findall(text)]
+
+        def fits(c: tuple[str, str, list[tuple[float, float]], int]) -> bool:
+            rs = c[2]
+            return len(rs) == len(vals) and all(min(lo, hi) - 1e-6 <= v <= max(lo, hi) + 1e-6
+                                                for v, (lo, hi) in zip(vals, rs))
+
+        single = [c for c in cands if c[3] == 1]
+        for pool in ([c for c in single if fits(c)], single, [c for c in cands if fits(c)], cands):
+            if pool:
+                types = {c[0] for c in pool}
+                if len(types) != 1:
+                    return None
+                names = {c[1] for c in pool if fits(c)}
+                return pool[0][0], (names.pop() if len(names) == 1 else "")
+        return None
+
+    def annotate(self, item: "Item") -> None:
+        """Fill ``affix``/``name`` on an item's explicit mods (uniques have none)."""
+        if item.rarity == "UNIQUE":
+            return
+        for m in item.mods:
+            if m.kind in ("explicit", "crafted") and not m.affix:
+                hit = self.classify(m.text)
+                if hit:
+                    m.affix, m.name = hit
 
 
 def normalize_stat(text: str) -> str:
