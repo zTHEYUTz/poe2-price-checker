@@ -71,6 +71,13 @@
 
   /* search */
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chips.main { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .chips.main::-webkit-scrollbar { display: none; }
+  .chips.main .chip { flex: none; padding: 6px 14px; font-size: 14px; }
+  .chip .n { opacity: .65; font-size: 11.5px; margin-left: 5px; }
+  .chips.sub { margin-top: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .chips.sub .chip { padding: 3px 10px; font-size: 12.5px; background: none; }
+  .chips.sub .chip[aria-pressed=true] { background: #3a3020; color: var(--gold); border-color: var(--gold-dim); }
   .chip { background: var(--panel2); border: 1px solid var(--line); color: var(--muted); border-radius: 99px; padding: 4px 12px; font: 13px "IBM Plex Sans Thai", sans-serif; cursor: pointer; }
   .chip[aria-pressed=true] { color: #1a1208; background: var(--gold); border-color: var(--gold); }
   .list { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -374,7 +381,8 @@
   <!-- ===== Search ===== -->
   <section class="pane" id="pane-search">
     <input type="search" id="q" placeholder="พิมพ์ชื่อไอเทม เช่น Divine, Headhunter, Rune of…" autocomplete="off">
-    <div class="chips" id="chips"></div>
+    <div class="chips main" id="chips"></div>
+    <div class="chips sub" id="subchips" hidden></div>
     <div class="status" id="searchStatus"><div class="spin"></div><span>กำลังโหลดรายการไอเทมจาก poe.ninja…</span></div>
     <div class="err" id="searchErr"></div>
     <div class="tctl">
@@ -760,6 +768,43 @@ const CAT_TH = {
   UniqueFlasks: "ยูนีค: ขวดยา", UniqueCharms: "ยูนีค: Charm", UniqueJewels: "ยูนีค: Jewel",
 };
 let catalog = null, catalogLoading = false, catFilter = "", catRates = rates;
+/* main groups shown as one row; sub-categories appear only for the chosen group */
+const CAT_GROUPS = [
+  { key: "currency", name: "Currency", cats: ["Currency"] },
+  { key: "unique", name: "ยูนีค", cats: ["UniqueWeapons", "UniqueArmours", "UniqueAccessories", "UniqueFlasks", "UniqueCharms", "UniqueJewels"] },
+  { key: "gem", name: "เจม", cats: ["UncutGems", "LineageSupportGems"] },
+  { key: "socket", name: "รูน / Soul Core", cats: ["Runes", "SoulCores", "Idols"] },
+  { key: "league", name: "ของลีก / Endgame", cats: ["Essences", "Ritual", "Delirium", "Breach", "Abyss"] },
+];
+const SUB_NAME = { UniqueWeapons: "อาวุธ", UniqueArmours: "เกราะ", UniqueAccessories: "เครื่องประดับ", UniqueFlasks: "ขวดยา",
+  UniqueCharms: "Charm", UniqueJewels: "Jewel", UncutGems: "Uncut Gem", LineageSupportGems: "Lineage Gem" };
+let groupFilter = "";
+const groupOfCat = (c) => (CAT_GROUPS.find((g) => g.cats.includes(c)) || { key: "other" }).key;
+function catMatches(it) {
+  if (catFilter) return it.category === catFilter;
+  return !groupFilter || groupOfCat(it.category) === groupFilter;
+}
+function renderChips() {
+  const present = [...new Set(catalog.map((i) => i.category))];
+  const count = (pred) => catalog.filter((i) => pred(i.category)).length;
+  const groups = CAT_GROUPS.filter((g) => g.cats.some((c) => present.includes(c)));
+  const others = present.filter((c) => groupOfCat(c) === "other");
+  if (others.length) groups.push({ key: "other", name: "อื่น ๆ", cats: others });
+  $("chips").innerHTML = `<button class="chip" data-g="" aria-pressed="${!groupFilter}">ทั้งหมด<span class="n">${catalog.length}</span></button>` +
+    groups.map((g) => `<button class="chip" data-g="${g.key}" aria-pressed="${groupFilter === g.key}">${esc(g.name)}<span class="n">${count((c) => g.cats.includes(c))}</span></button>`).join("");
+  const cur = groups.find((g) => g.key === groupFilter);
+  const subs = cur ? cur.cats.filter((c) => present.includes(c)) : [];
+  $("subchips").hidden = subs.length < 2;
+  $("subchips").innerHTML = subs.length < 2 ? "" :
+    `<button class="chip" data-c="" aria-pressed="${!catFilter}">ทั้งหมดใน${esc(cur.name)}</button>` +
+    subs.map((c) => `<button class="chip" data-c="${esc(c)}" aria-pressed="${catFilter === c}">${esc(SUB_NAME[c] || CAT_TH[c] || c)}<span class="n">${count((x) => x === c)}</span></button>`).join("");
+  $("chips").querySelectorAll(".chip").forEach((b) => (b.onclick = () => {
+    groupFilter = b.dataset.g; catFilter = ""; page = 0; renderChips(); renderSearch();
+  }));
+  $("subchips").querySelectorAll(".chip").forEach((b) => (b.onclick = () => {
+    catFilter = b.dataset.c; page = 0; renderChips(); renderSearch();
+  }));
+}
 
 async function loadCatalog() {
   if (catalog || catalogLoading) return;
@@ -778,14 +823,7 @@ async function loadCatalog() {
     if (STATIC && d.updated && $("updated")) {
       $("updated").textContent = "· อัปเดตล่าสุด " + new Date(d.updated).toLocaleString();
     }
-    const cats = [...new Set(catalog.map((i) => i.category))];
-    $("chips").innerHTML = [`<button class="chip" data-c="" aria-pressed="${!catFilter}">ทั้งหมด</button>`]
-      .concat(cats.map((c) => `<button class="chip" data-c="${esc(c)}" aria-pressed="${catFilter === c}">${esc(CAT_TH[c] || c)}</button>`)).join("");
-    $("chips").querySelectorAll(".chip").forEach((b) => (b.onclick = () => {
-      catFilter = b.dataset.c; page = 0;
-      $("chips").querySelectorAll(".chip").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-      renderSearch();
-    }));
+    renderChips();
     renderSearch();
   } catch (e) {
     showErr($("searchErr"), "โหลดรายการไม่ได้: " + e.message);
@@ -830,7 +868,7 @@ function renderSearch() {
   if (!catalog) return;
   const words = $("q").value.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const q = words.join(" ");
-  const hits = catalog.filter((it) => (!catFilter || it.category === catFilter) && words.every((w) => it.key.includes(w)));
+  const hits = catalog.filter((it) => catMatches(it) && words.every((w) => it.key.includes(w)));
   const val = { name: (it) => it.name.toLowerCase(), value: (it) => it.value, volume: volOf, change: (it) => it.change };
   hits.sort((a, b) => {
     if (sortKey) {
