@@ -192,6 +192,12 @@
   .tier.suffix { background: #1f3d2c; color: #9fe0b5; border: 1px solid #2f6645; }
   .rng { color: #7d7466; font-size: 11.5px; margin-left: 4px; }
   .o .acts { display: flex; gap: 6px; flex: none; }
+  .lthumb { width: 40px; height: 40px; flex: none; object-fit: contain; padding: 3px; cursor: help; outline: none;
+    background: #0004; border: 1px solid var(--line); border-radius: 6px; transition: border-color .15s; }
+  .lthumb.lg { width: 60px; height: 60px; }
+  .lthumb.none { cursor: default; background: none; border-color: transparent; }
+  .lthumb:hover, .lthumb:focus-visible { border-color: var(--gold); }
+  .others { gap: 6px; }
   .btn.sm.warp { padding: 4px 10px; }
   /* saved builds */
   .saved { display: grid; gap: 10px; }
@@ -475,7 +481,7 @@ function shopPanel(line, el, r) {
   let html = `<div class="top">`;
   if (best) {
     const f = best.value != null ? fmt(best.value, r) : null;
-    html += `<div class="who">ร้านถูกสุด: <b class="tipme" tabindex="0" data-tip="0">${esc(best.seller)}</b> — <b>${esc(priceText(best))}</b>${best.item ? `<span class="tiphint">(ชี้ที่ชื่อร้านเพื่อดู mod)</span>` : ""}${f ? ` <span class="note">≈ ${esc(f.join(" / "))}</span>` : ""}
+    html += `${best.icon ? `<img class="lthumb lg" src="${esc(best.icon)}" alt="" tabindex="0" data-tip="0">` : ""}<div class="who">ร้านถูกสุด: <b class="tipme" tabindex="0" data-tip="0">${esc(best.seller)}</b> — <b>${esc(priceText(best))}</b>${best.item ? `<span class="tiphint">(ชี้ที่รูปหรือชื่อร้านเพื่อดู mod)</span>` : ""}${f ? ` <span class="note">≈ ${esc(f.join(" / "))}</span>` : ""}
       ${line.checkedAt ? `<span class="note">อัปเดต ${esc(line.checkedAt)}</span>` : ""}</div>
       <a class="btn warp" href="${esc(line.search_url)}" target="_blank" rel="noopener">วาปไปร้าน ↗</a>
       ${best.whisper ? `<button class="btn" data-act="copy">คัดลอกข้อความซื้อ</button>` : ""}`;
@@ -486,7 +492,7 @@ function shopPanel(line, el, r) {
   }
   html += `<button class="btn" data-act="refresh">${refreshLabel}</button></div>`;
   if (ls.length > 1) {
-    html += `<div class="others">` + ls.slice(1).map((x, i) => `<div class="o"><span><span class="tipme" tabindex="0" data-tip="${i + 1}">${esc(x.seller)}</span> — ${esc(priceText(x))}</span><span class="acts"><a class="btn sm warp" href="${esc(line.search_url)}" target="_blank" rel="noopener" title="เปิดเทรดไซต์ — ร้านนี้อยู่อันดับ ${i + 2} ในรายการ">วาปไปร้าน ↗</a>${x.whisper ? `<button class="btn sm" data-copy="${i + 1}">คัดลอกข้อความซื้อ</button>` : ""}</span></div>`).join("") + `</div>`;
+    html += `<div class="others">` + ls.slice(1).map((x, i) => `<div class="o">${x.icon ? `<img class="lthumb" src="${esc(x.icon)}" alt="" loading="lazy" tabindex="0" data-tip="${i + 1}">` : `<span class="lthumb none"></span>`}<span><span class="tipme" tabindex="0" data-tip="${i + 1}">${esc(x.seller)}</span> — ${esc(priceText(x))}</span><span class="acts"><a class="btn sm warp" href="${esc(line.search_url)}" target="_blank" rel="noopener" title="เปิดเทรดไซต์ — ร้านนี้อยู่อันดับ ${i + 2} ในรายการ">วาปไปร้าน ↗</a>${x.whisper ? `<button class="btn sm" data-copy="${i + 1}">คัดลอกข้อความซื้อ</button>` : ""}</span></div>`).join("") + `</div>`;
   }
   if (best) html += `<div class="shopmsg">"วาปไปร้าน" จะเปิดเทรดไซต์ทางการ เรียงราคาถูกสุดก่อน → กด <b>Travel to Hideout</b> ที่ร้านที่เลือก (ร้านที่ 2–5 อยู่ถัดลงไปตามลำดับราคา) (ต้องล็อกอินเว็บ pathofexile.com และเปิดเกมไว้) · ถ้าร้านขายไปแล้ว กด "รีเฟรช" เพื่อหาร้านใหม่</div>`;
   html += `<div class="shopmsg" data-msg></div>`;
