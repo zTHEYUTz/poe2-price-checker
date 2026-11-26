@@ -43,12 +43,14 @@ async def build(out: Path) -> int:
         written = []
         for lg in leagues:
             ninja = await pp.fetch_ninja(client, lg["id"])
+            pp.mark_exchangeable(ninja.catalog, await pp.trade_exchange_ids(client))
             if not ninja.catalog:
                 print(f"  ! {lg['id']}: no prices, skipped", file=sys.stderr)
                 continue
             payload = {
                 "league": lg["id"], "primary": ninja.primary,
                 "ex": ninja.currency("Exalted Orb"), "div": ninja.currency("Divine Orb"),
+                "chaos": ninja.currency("Chaos Orb"),
                 "updated": now, "items": ninja.catalog,
             }
             (data_dir / f"{lg['slug']}.json").write_text(

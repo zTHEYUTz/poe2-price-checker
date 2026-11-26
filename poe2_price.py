@@ -400,6 +400,30 @@ def spark_of(raw: Any) -> dict[str, Any]:
     return {"change": round(float(change), 2) if isinstance(change, (int, float)) else None, "spark": data}
 
 
+_EXCHANGE_IDS: set[str] = set()
+
+
+async def trade_exchange_ids(client: httpx.AsyncClient) -> set[str]:
+    """Ids usable on the trade site's bulk exchange (cached; empty set if unreachable)."""
+    if _EXCHANGE_IDS:
+        return _EXCHANGE_IDS
+    try:
+        r = await client.get(f"{TRADE}/data/static")
+        r.raise_for_status()
+        _EXCHANGE_IDS.update(str(e["id"]) for g in r.json().get("result", []) for e in g.get("entries", [])
+                             if e.get("id"))
+    except (httpx.HTTPError, ValueError, KeyError):
+        pass
+    return _EXCHANGE_IDS
+
+
+def mark_exchangeable(catalog: list[dict[str, Any]], ids: set[str]) -> None:
+    """Set ``xid`` on catalog entries the trade site's bulk exchange knows."""
+    for c in catalog:
+        if c.get("id") and c["id"] in ids:
+            c["xid"] = c["id"]
+
+
 async def fetch_ninja(client: httpx.AsyncClient, league: str) -> NinjaPrices:
     """Download all needed poe.ninja categories concurrently."""
 
@@ -439,9 +463,13 @@ async def fetch_ninja(client: httpx.AsyncClient, league: str) -> NinjaPrices:
             val = line.get("primaryValue")
             if nm and isinstance(val, (int, float)):
                 exchange[nm.lower()] = float(val)
-                catalog.setdefault(nm.lower(), {"name": nm, "category": typ,
-                                                "value": float(val), "icon": icon(m.get("image")),
-                                                **spark_of(line.get("sparkline"))})
+                vol = line.get("volumePrimaryValue")
+                catalog.setdefault(nm.lower(), {
+                    "name": nm, "category": typ, "value": float(val), "icon": icon(m.get("image")),
+                    "id": str(line.get("id") or ""),
+                    # traded volume is given in primary currency; divide by price for a count
+                    "volume": round(float(vol) / float(val)) if isinstance(vol, (int, float)) and val else None,
+                    **spark_of(line.get("sparkline"))})
 
     uniques: dict[str, float] = {}
     for typ, data in zip(UNIQUE_TYPES, un_results):

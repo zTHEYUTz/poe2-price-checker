@@ -368,3 +368,10 @@ def test_build_store_history_completeness(tmp_path) -> None:  # type: ignore[no-
     assert (h[0]["missing"], h[0]["count"], h[0]["blocked"]) == (2, 28, False)
     assert (h[1]["missing"], h[1]["blocked"]) == (9, True)
     assert "missing" not in h[2] and "count" not in h[2]  # bad types are ignored
+
+
+def test_mark_exchangeable() -> None:
+    cat = [{"name": "Divine Orb", "id": "divine"}, {"name": "Stoat Idol", "id": "stoat-idol"},
+           {"name": "Some Unique"}]
+    pp.mark_exchangeable(cat, {"divine", "exalted"})
+    assert cat[0]["xid"] == "divine" and "xid" not in cat[1] and "xid" not in cat[2]

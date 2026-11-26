@@ -177,13 +177,14 @@ async def make_trade(client: httpx.AsyncClient, league: str) -> pp.TradeClient:
 
 def rates(ninja: pp.NinjaPrices) -> dict[str, Any]:
     return {"primary": ninja.primary, "ex": ninja.currency("Exalted Orb"),
-            "div": ninja.currency("Divine Orb")}
+            "div": ninja.currency("Divine Orb"), "chaos": ninja.currency("Chaos Orb")}
 
 
 async def get_catalog(league: str) -> dict[str, Any]:
     async with make_client() as client:
         league = await resolve_league(league, client)
         ninja = await get_ninja(league, client)
+        pp.mark_exchangeable(ninja.catalog, await pp.trade_exchange_ids(client))
     return {"league": league, **rates(ninja), "items": ninja.catalog}
 
 

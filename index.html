@@ -235,6 +235,32 @@
   #tip .matchbar.part { background: #241d10; color: #e6c27a; }
   .lmeta { display: block; font-size: 12px; color: var(--muted); }
   .lmeta .full { color: var(--ok); } .lmeta .part { color: #e6c27a; }
+  /* price table */
+  .tctl { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end; margin-top: 14px; }
+  .tctl select { min-width: 150px; }
+  .tctl .count { margin: 0 0 10px auto; }
+  #ptWrap { margin-top: 12px; }
+  table.pt { min-width: 640px; }
+  table.pt th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+  table.pt th[data-sort]:hover { color: var(--text); }
+  table.pt th[aria-sort="ascending"]::after { content: " ▲"; color: var(--gold); }
+  table.pt th[aria-sort="descending"]::after { content: " ▼"; color: var(--gold); }
+  table.pt th.num, table.pt td.num { text-align: right; }
+  table.pt td { vertical-align: middle; padding: 8px 14px; }
+  table.pt .icell { display: flex; gap: 10px; align-items: center; min-width: 0; }
+  table.pt .icell img, table.pt .icell .noimg { width: 34px; height: 34px; object-fit: contain; flex: none; }
+  table.pt .nm { font-weight: 600; }
+  table.pt .cat { color: var(--muted); font-size: 12.5px; }
+  table.pt .pv { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.pt .pv small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  table.pt td.vol { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.pt td.chg .trend { justify-content: flex-end; display: flex; }
+  table.pt td.links { white-space: nowrap; font-size: 13px; }
+  table.pt td.links a { color: var(--gold); text-decoration: none; }
+  table.pt td.links a:hover { text-decoration: underline; }
+  table.pt tr.low td { opacity: .7; }
+  .pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 12px; color: var(--muted); font-size: 14px; }
+  .pager .btn:disabled { opacity: .4; cursor: default; }
   footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
   @media (max-width: 600px) {
     button.go { margin-left: 0; width: 100%; }
@@ -270,8 +296,32 @@
     <div class="chips" id="chips"></div>
     <div class="status" id="searchStatus"><div class="spin"></div><span>กำลังโหลดรายการไอเทมจาก poe.ninja…</span></div>
     <div class="err" id="searchErr"></div>
-    <div class="list" id="list" hidden></div>
-    <div class="count" id="count"></div>
+    <div class="tctl">
+      <label class="field"><span>แสดงราคาเป็น</span>
+        <select id="unit"><option value="div">Divine Orb</option><option value="ex">Exalted Orb</option><option value="chaos">Chaos Orb</option></select>
+      </label>
+      <label class="field"><span>แถวต่อหน้า</span>
+        <select id="perPage"><option>25</option><option selected>50</option><option>100</option></select>
+      </label>
+      <div class="count" id="count"></div>
+    </div>
+    <div class="tablewrap" id="ptWrap" hidden>
+      <table class="pt">
+        <thead><tr>
+          <th data-sort="name">ไอเทม</th>
+          <th data-sort="value" class="num">ราคา</th>
+          <th data-sort="volume" class="num" title="currency/เจม/รูน ฯลฯ: ปริมาณที่ซื้อขายล่าสุด (คำนวณจากข้อมูล poe.ninja) · ยูนีค: จำนวนที่ประกาศขาย">ปริมาณ</th>
+          <th data-sort="change" class="num">7 วัน</th>
+          <th class="links">ลิงก์</th>
+        </tr></thead>
+        <tbody id="ptBody"></tbody>
+      </table>
+    </div>
+    <div class="pager" id="pager" hidden>
+      <button class="btn sm" id="pgPrev">‹ ก่อนหน้า</button>
+      <span id="pgInfo"></span>
+      <button class="btn sm" id="pgNext">ถัดไป ›</button>
+    </div>
   </section>
 
   <!-- ===== Paste item ===== -->
@@ -631,7 +681,7 @@ async function loadCatalog() {
     $("chips").innerHTML = [`<button class="chip" data-c="" aria-pressed="${!catFilter}">ทั้งหมด</button>`]
       .concat(cats.map((c) => `<button class="chip" data-c="${esc(c)}" aria-pressed="${catFilter === c}">${esc(CAT_TH[c] || c)}</button>`)).join("");
     $("chips").querySelectorAll(".chip").forEach((b) => (b.onclick = () => {
-      catFilter = b.dataset.c;
+      catFilter = b.dataset.c; page = 0;
       $("chips").querySelectorAll(".chip").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       renderSearch();
     }));
@@ -643,31 +693,97 @@ async function loadCatalog() {
   }
 }
 
+/* ---------- price table ---------- */
+const TRADE_WEB = "https://www.pathofexile.com/trade2";
+let sortKey = "", sortDir = -1, page = 0;
+const prefs = { unit: store.get("poe2unit") || "div", per: +(store.get("poe2per") || 50) };
+$("unit").value = prefs.unit; $("perPage").value = String(prefs.per);
+
+function unitRate(r, unit) {
+  // value of 1 unit in poe.ninja's primary currency (Divine)
+  return unit === "ex" ? r.ex : unit === "chaos" ? r.chaos : r.div;
+}
+function priceIn(v, r, unit) {
+  const rate = unitRate(r, unit);
+  if (v == null || !rate) return null;
+  const n = v / rate;
+  const txt = n >= 1000 ? Math.round(n).toLocaleString() : n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n >= 1 ? n.toFixed(2) : n.toFixed(n >= 0.1 ? 2 : 3);
+  return `${txt} ${{ div: "div", ex: "ex", chaos: "c" }[unit]}`;
+}
+function tradeLink(it, league, unit) {
+  const lg = encodeURIComponent(league);
+  if (it.xid) {
+    const have = unit === "chaos" ? "chaos" : unit === "ex" ? "exalted" : "divine";
+    const q = { exchange: { status: { option: "online" }, have: [have === it.xid ? (it.xid === "divine" ? "exalted" : "divine") : have], want: [it.xid] } };
+    return `${TRADE_WEB}/exchange/poe2/${lg}?q=${encodeURIComponent(JSON.stringify(q))}`;
+  }
+  const query = { status: { option: "online" } };
+  if (it.base && it.base !== it.name) { query.name = it.name; query.type = it.base; } else query.type = it.name;
+  return `${TRADE_WEB}/search/poe2/${lg}?q=${encodeURIComponent(JSON.stringify({ query }))}`;
+}
+const wikiLink = (name) => "https://www.poe2wiki.net/wiki/" + encodeURIComponent(name.replace(/ /g, "_"));
+const lowConf = (it) => it.listings != null && it.listings < 5;
+const volOf = (it) => it.volume ?? it.listings ?? null;
+
 function renderSearch() {
   if (!catalog) return;
   const words = $("q").value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const hits = catalog.filter((it) => (!catFilter || it.category === catFilter) && words.every((w) => it.key.includes(w)))
-    .sort((a, b) => {
-      const q = words.join(" ");
-      const sa = a.name.toLowerCase().startsWith(q) ? 1 : 0, sb = b.name.toLowerCase().startsWith(q) ? 1 : 0;
-      const la = a.listings != null && a.listings < 5 ? 0 : 1, lb = b.listings != null && b.listings < 5 ? 0 : 1;
-      return sb - sa || lb - la || b.value - a.value;
-    });
-  const shown = hits.slice(0, 80);
-  $("list").hidden = !shown.length;
-  $("list").innerHTML = shown.map((it) => {
-    const f = fmt(it.value, catRates);
+  const q = words.join(" ");
+  const hits = catalog.filter((it) => (!catFilter || it.category === catFilter) && words.every((w) => it.key.includes(w)));
+  const val = { name: (it) => it.name.toLowerCase(), value: (it) => it.value, volume: volOf, change: (it) => it.change };
+  hits.sort((a, b) => {
+    if (sortKey) {
+      const x = val[sortKey](a), y = val[sortKey](b);
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;  // empty values always last
+      if (y == null) return -1;
+      return (x < y ? -1 : x > y ? 1 : 0) * sortDir;
+    }
+    // default: name-prefix matches first, unreliable prices last, then most expensive
+    const sa = a.name.toLowerCase().startsWith(q) ? 1 : 0, sb = b.name.toLowerCase().startsWith(q) ? 1 : 0;
+    return sb - sa || (lowConf(a) ? 1 : 0) - (lowConf(b) ? 1 : 0) || b.value - a.value;
+  });
+  const pages = Math.max(1, Math.ceil(hits.length / prefs.per));
+  page = Math.min(page, pages - 1);
+  const shown = hits.slice(page * prefs.per, (page + 1) * prefs.per);
+  const league = catRates.league || $("league").value;
+  const other = prefs.unit === "div" ? "ex" : "div";
+
+  document.querySelectorAll("table.pt th[data-sort]").forEach((th) =>
+    th.setAttribute("aria-sort", th.dataset.sort === sortKey ? (sortDir > 0 ? "ascending" : "descending") : "none"));
+  $("ptWrap").hidden = !shown.length;
+  $("ptBody").innerHTML = shown.map((it) => {
     const img = it.icon ? `<img src="${esc(it.icon)}" alt="" loading="lazy">` : `<div class="noimg"></div>`;
-    return `<div class="it${it.listings != null && it.listings < 5 ? " low" : ""}">${img}
-      <div><div class="nm">${esc(it.name)}</div><div class="cat">${esc(CAT_TH[it.category] || it.category)}${it.base ? " · " + esc(it.base) : ""}${it.listings != null ? ` · ขาย ${it.listings} รายการ` : ""}${it.listings != null && it.listings < 5 ? ` <span class="warn">ข้อมูลน้อย ราคาอาจไม่จริง</span>` : ""}</div></div>
-      <div class="pr">${esc(f[0])}${f[1] ? `<small>${esc(f[1])}</small>` : ""}${trendHtml(it)}</div></div>`;
+    const main = priceIn(it.value, catRates, prefs.unit), sub = priceIn(it.value, catRates, other);
+    const vol = volOf(it);
+    const volTxt = vol == null ? "—" : (it.volume != null ? vol.toLocaleString() : `${vol.toLocaleString()} ประกาศ`);
+    return `<tr class="${lowConf(it) ? "low" : ""}">
+      <td><div class="icell">${img}<div><div class="nm">${esc(it.name)}</div>
+        <div class="cat">${esc(CAT_TH[it.category] || it.category)}${it.base ? " · " + esc(it.base) : ""}${lowConf(it) ? ` <span class="warn">ข้อมูลน้อย ราคาอาจไม่จริง</span>` : ""}</div></div></div></td>
+      <td class="num"><div class="pv">${esc(main || "—")}${sub ? `<small>${esc(sub)}</small>` : ""}</div></td>
+      <td class="num vol">${esc(volTxt)}</td>
+      <td class="num chg">${trendHtml(it) || '<span class="note">—</span>'}</td>
+      <td class="links"><a href="${esc(wikiLink(it.name))}" target="_blank" rel="noopener">Wiki</a> · <a href="${esc(tradeLink(it, league, prefs.unit))}" target="_blank" rel="noopener" title="${it.xid ? "เปิดหน้า Currency Exchange ของเทรดไซต์" : "เปิดหน้าค้นหาของเทรดไซต์"}">Trade ↗</a></td>
+    </tr>`;
   }).join("");
+  $("pager").hidden = pages <= 1;
+  $("pgInfo").textContent = `หน้า ${page + 1} / ${pages}`;
+  $("pgPrev").disabled = page === 0; $("pgNext").disabled = page >= pages - 1;
   $("count").textContent = catalog.length
-    ? `พบ ${hits.length.toLocaleString()} รายการ${hits.length > shown.length ? " (แสดง 80 อันดับแรก)" : ""} จากทั้งหมด ${catalog.length.toLocaleString()}${STATIC ? "" : ' · ไอเทม rare/magic ให้ใช้แท็บ "วางไอเทมจากเกม"'}`
+    ? `พบ ${hits.length.toLocaleString()} รายการ จากทั้งหมด ${catalog.length.toLocaleString()}${STATIC ? "" : ' · ไอเทม rare/magic ให้ใช้แท็บ "วางไอเทมจากเกม"'}`
     : "";
 }
+document.querySelectorAll("table.pt th[data-sort]").forEach((th) => (th.onclick = () => {
+  const k = th.dataset.sort;
+  if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = k === "name" ? 1 : -1; }
+  page = 0; renderSearch();
+}));
+$("unit").onchange = () => { prefs.unit = $("unit").value; store.set("poe2unit", prefs.unit); renderSearch(); };
+$("perPage").onchange = () => { prefs.per = +$("perPage").value; store.set("poe2per", String(prefs.per)); page = 0; renderSearch(); };
+$("pgPrev").onclick = () => { page--; renderSearch(); $("pane-search").scrollIntoView({ block: "start" }); };
+$("pgNext").onclick = () => { page++; renderSearch(); $("pane-search").scrollIntoView({ block: "start" }); };
 let qTimer;
-$("q").oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(renderSearch, 80); };
+$("q").oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(() => { page = 0; sortKey = ""; renderSearch(); }, 80); };
 
 /* ---------- single item ---------- */
 $("itemText").value = store.get("poe2item") || "";
