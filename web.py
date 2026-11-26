@@ -273,6 +273,11 @@ async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], Non
         league = await resolve_league(str(opts.get("league") or ""), client)
         emit({"type": "build", "title": build.title, "league": league,
               "items": len(build.items), "gems": len(build.gems)})
+        # full item details for the equipment view (slot, rarity, mods, runes)
+        emit({"type": "items", "items": [{
+            "slot": it.slot, "rarity": it.rarity, "name": it.name, "base": it.base,
+            "corrupted": it.corrupted, "runes": it.runes,
+            "mods": [m.__dict__ for m in it.mods]} for it in build.items]})
         emit({"type": "status", "msg": "กำลังดึงราคาจาก poe.ninja…"})
         ninja = await get_ninja(league, client)
         emit({"type": "rates", **rates(ninja)})
