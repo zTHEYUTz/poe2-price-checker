@@ -25,6 +25,73 @@ import poe2_price as pp
 
 HOST, PORT = "127.0.0.1", int(os.environ.get("PORT", "8765"))
 INDEX = Path(__file__).with_name("index.html")
+BUILDS_FILE = Path(os.environ.get("POE2_BUILDS_FILE") or Path(__file__).with_name("saved_builds.json"))
+
+
+class BuildStore:
+    """Saved builds in a small JSON file next to the app (thread-safe)."""
+
+    MAX_BUILDS = 300
+    MAX_SOURCE = 500_000
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+
+    def _load(self) -> list[dict[str, Any]]:
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def _save(self, builds: list[dict[str, Any]]) -> None:
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(builds, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def all(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return self._load()
+
+    def upsert(self, data: dict[str, Any]) -> dict[str, Any]:
+        source = str(data.get("source") or "").strip()
+        if not source:
+            raise ValueError("ไม่มีโค้ดบิวให้บันทึก")
+        if len(source) > self.MAX_SOURCE:
+            raise ValueError("โค้ดบิวยาวเกินไป")
+        with self._lock:
+            builds = self._load()
+            bid = str(data.get("id") or "")
+            cur = next((b for b in builds if (bid and b.get("id") == bid) or b.get("source") == source), None)
+            if cur is None:
+                if len(builds) >= self.MAX_BUILDS:
+                    raise ValueError(f"บันทึกได้สูงสุด {self.MAX_BUILDS} บิว — ลบบิวเก่าก่อน")
+                cur = {"id": os.urandom(6).hex(), "source": source, "created": time.time()}
+                builds.insert(0, cur)
+            for key, limit in (("name", 100), ("title", 120), ("league", 80)):
+                if data.get(key) is not None:
+                    cur[key] = str(data[key])[:limit]
+            for key in ("total", "ex", "div"):
+                if isinstance(data.get(key), (int, float)):
+                    cur[key] = float(data[key])
+            if data.get("checked"):
+                cur["checked"] = time.time()
+            cur["source"] = source
+            self._save(builds)
+            return cur
+
+    def delete(self, bid: str) -> bool:
+        with self._lock:
+            builds = self._load()
+            keep = [b for b in builds if b.get("id") != bid]
+            if len(keep) == len(builds):
+                return False
+            self._save(keep)
+            return True
+
+
+BUILDS = BuildStore(BUILDS_FILE)
 SITE_HELP = {
     "mobalytics.gg": "เปิดหน้าบิวในเบราว์เซอร์ → หาปุ่ม \"PoB\" / \"Export to PoB\" (มักอยู่ใกล้ชื่อบิวหรือส่วน Equipment) "
                      "→ กดคัดลอกโค้ด → กลับมาวางในช่องนี้",
@@ -136,7 +203,8 @@ async def price_item_text(opts: dict[str, Any], emit: Callable[[dict[str, Any]],
             line = pp.PriceLine(item.slot, item.name, val, "poe.ninja" if val is not None else "-",
                                 "" if val is not None else "ไม่พบราคาใน poe.ninja (ไอเทมธรรมดามักไม่มีราคาตลาด)",
                                 query=pp.name_query(item.name, item.base, item.rarity),
-                                icon=ninja.icon(item.name, item.base))
+                                icon=ninja.icon(item.name, item.base),
+                                trend=ninja.trend(item.name, item.base))
         emit({"type": "line", **line.__dict__})
         emit({"type": "done"})
 
@@ -215,7 +283,7 @@ async def price_build(opts: dict[str, Any], emit: Callable[[dict[str, Any]], Non
                 send(pp.PriceLine(item.slot, f"{item.rarity.title()} {item.base}", None, "-", note))
             for rune in item.runes:
                 send(pp.PriceLine("Rune", f"{rune} ({item.slot})", ninja.currency(rune), "poe.ninja",
-                                  query={"type": rune}, icon=ninja.icon(rune)))
+                                  query={"type": rune}, icon=ninja.icon(rune), trend=ninja.trend(rune)))
         for gem in build.gems:
             send(pp.price_gem(gem, ninja))
         emit({"type": "done"})
@@ -248,6 +316,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, asyncio.run(get_catalog(league)))
             except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
                 self._json(502, {"error": str(exc)})
+        elif url.path == "/api/builds":
+            self._json(200, BUILDS.all())
         elif url.path == "/api/leagues":
             try:
                 self._json(200, asyncio.run(get_leagues()))
@@ -256,7 +326,33 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._json(404, {"error": "not found"})
 
+    def _read_json(self) -> dict[str, Any] | None:
+        if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+            self._json(415, {"error": "expected JSON"})
+            return None
+        length = min(int(self.headers.get("Content-Length", "0")), 2_000_000)
+        try:
+            data = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError:
+            data = None
+        if not isinstance(data, dict):
+            self._json(400, {"error": "bad JSON"})
+            return None
+        return data
+
     def do_POST(self) -> None:
+        if self.path in ("/api/builds/save", "/api/builds/delete"):
+            data = self._read_json()
+            if data is None:
+                return
+            try:
+                if self.path.endswith("save"):
+                    self._json(200, BUILDS.upsert(data))
+                else:
+                    self._json(200, {"deleted": BUILDS.delete(str(data.get("id") or ""))})
+            except (ValueError, OSError) as exc:
+                self._json(400, {"error": str(exc)})
+            return
         handler = {"/api/price": price_build, "/api/item": price_item_text,
                    "/api/listings": find_listings}.get(self.path)
         if handler is None:

@@ -68,6 +68,8 @@ class Mod:
 
     text: str
     kind: str  # implicit | explicit | enchant | rune | crafted
+    affix: str = ""  # prefix | suffix (known from advanced copy / trade data)
+    tier: str = ""   # e.g. "P6", "S2"
 
 
 @dataclass
@@ -107,6 +109,7 @@ class PriceLine:
     search_url: str = ""
     listings: list[dict[str, Any]] = field(default_factory=list)
     icon: str = ""  # item picture URL (poe.ninja or trade site)
+    trend: dict[str, Any] | None = None  # 7-day {change, spark} from poe.ninja
 
 
 @dataclass
@@ -227,6 +230,7 @@ def parse_item_text(text: str, slot: str) -> Item:
 GAME_SEP = re.compile(r"^-{4,}$")
 GAME_SUFFIX = re.compile(r"\s*\((implicit|rune|enchant|crafted|fractured|desecrated|augmented)\)\s*$", re.I)
 GAME_RANGE = re.compile(r"\(\s*[+-]?\d+(?:\.\d+)?\s*[-–—]\s*[+-]?\d+(?:\.\d+)?\s*\)")
+ADV_HEADER = re.compile(r"^\{\s*(Prefix|Suffix)\s+Modifier(?:[^}]*?Tier:\s*(\d+))?[^}]*\}", re.I)
 GAME_SKIP = {"corrupted", "unidentified", "mirrored", "split", "unmodifiable", "sanctified"}
 
 
@@ -259,8 +263,14 @@ def parse_game_item(text: str) -> tuple[Item, int]:
 
     gem_level = 0
     for sec in sections[1:]:
+        affix = tier = ""
         for ln in sec:
             low = ln.lower()
+            if ln.startswith("{"):  # Ctrl+Alt+C header for the mod lines below it
+                hm = ADV_HEADER.match(ln)
+                affix = hm.group(1).lower() if hm else ""
+                tier = f"{affix[:1].upper()}{hm.group(2)}" if hm and hm.group(2) else ""
+                continue
             if low in GAME_SKIP:
                 item.corrupted = item.corrupted or low == "corrupted"
                 continue
@@ -277,7 +287,8 @@ def parse_game_item(text: str) -> tuple[Item, int]:
             if not clean or not NUM_RE.search(clean) and tag == "":
                 continue  # flavour / description text
             kind = {"implicit": "implicit", "rune": "rune", "enchant": "enchant"}.get(tag, "explicit")
-            item.mods.append(Mod(clean, kind))
+            item.mods.append(Mod(clean, kind, affix if kind == "explicit" else "",
+                                 tier if kind == "explicit" else ""))
     return item, gem_level
 
 
@@ -364,8 +375,28 @@ class NinjaPrices:
             self.__dict__["_icons"] = idx
         return next((idx[n.lower()] for n in names if idx.get(n.lower())), "")
 
+    def trend(self, *names: str) -> dict[str, Any] | None:
+        """7-day price trend ({change, spark}) for the first of ``names`` in the catalog."""
+        idx = self.__dict__.get("_trends")
+        if idx is None:
+            idx = {str(c.get("name", "")).lower(): {"change": c.get("change"), "spark": c.get("spark")}
+                   for c in self.catalog if c.get("spark")}
+            self.__dict__["_trends"] = idx
+        return next((idx[n.lower()] for n in names if n.lower() in idx), None)
+
     def currency(self, name: str) -> float | None:
         return self.exchange.get(name.lower())
+
+
+def spark_of(raw: Any) -> dict[str, Any]:
+    """poe.ninja sparkline -> {change: total % over 7 days, spark: [cumulative %, ...]}."""
+    if not isinstance(raw, dict) or not raw.get("data"):
+        return {}
+    data = [round(float(v), 2) if isinstance(v, (int, float)) else None for v in raw["data"]]
+    if not any(v is not None for v in data):
+        return {}
+    change = raw.get("totalChange")
+    return {"change": round(float(change), 2) if isinstance(change, (int, float)) else None, "spark": data}
 
 
 async def fetch_ninja(client: httpx.AsyncClient, league: str) -> NinjaPrices:
@@ -408,7 +439,8 @@ async def fetch_ninja(client: httpx.AsyncClient, league: str) -> NinjaPrices:
             if nm and isinstance(val, (int, float)):
                 exchange[nm.lower()] = float(val)
                 catalog.setdefault(nm.lower(), {"name": nm, "category": typ,
-                                                "value": float(val), "icon": icon(m.get("image"))})
+                                                "value": float(val), "icon": icon(m.get("image")),
+                                                **spark_of(line.get("sparkline"))})
 
     uniques: dict[str, float] = {}
     for typ, data in zip(UNIQUE_TYPES, un_results):
@@ -426,7 +458,8 @@ async def fetch_ninja(client: httpx.AsyncClient, league: str) -> NinjaPrices:
             uniques[k] = v
             catalog.setdefault(k, {"name": line.get("name"), "base": line.get("baseType", ""),
                                    "category": typ, "value": v, "icon": icon(line.get("icon")),
-                                   "listings": int(line.get("listingCount") or 0)})
+                                   "listings": int(line.get("listingCount") or 0),
+                                   **spark_of(line.get("sparkLine"))})
     return NinjaPrices(primary=primary, exchange=exchange, uniques=uniques,
                        catalog=list(catalog.values()))
 
@@ -436,12 +469,12 @@ def price_gem(gem: Gem, ninja: NinjaPrices) -> PriceLine:
     by_name = ninja.currency(gem.name)
     if by_name is not None:
         return PriceLine("Gem", gem.name, by_name, "poe.ninja", query={"type": gem.name},
-                         icon=ninja.icon(gem.name))
+                         icon=ninja.icon(gem.name), trend=ninja.trend(gem.name))
     kind = "Support" if gem.support else "Skill"
     for nm, val in ninja.exchange.items():
         if f"uncut {kind.lower()} gem" in nm and re.search(rf"\b{gem.level}\b", nm):
             return PriceLine("Gem", f"{gem.name} (Uncut {kind} Lv{gem.level})", val, "poe.ninja",
-                             icon=ninja.icon(nm))
+                             icon=ninja.icon(nm), trend=ninja.trend(nm))
     return PriceLine("Gem", f"{gem.name} Lv{gem.level}", None, "-", "ไม่พบราคา")
 
 
@@ -516,14 +549,27 @@ def item_summary(item: dict[str, Any]) -> dict[str, Any]:
             props.append(name)
         else:
             props.append(f"{name}: {', '.join(vals)}" if vals else name)
-    def mod_text(m: Any) -> str:
-        # most mods are strings; PoE2 rune mods come as {"description": ..., "domain": ...}
+    def mod_info(m: Any, kind: str) -> dict[str, Any] | None:
+        # mods are strings, or (PoE2) {"description": ..., "mods": [{"name", "tier": "P6", "magnitudes"}]}
+        info: dict[str, Any] = {"kind": kind}
         if isinstance(m, dict):
+            subs = [x for x in m.get("mods") or [] if str(x.get("tier") or "")[:1] in ("P", "S")]
+            if subs:
+                tiers = [str(x["tier"]) for x in subs]
+                info["tier"] = "+".join(tiers)
+                kinds = {t[:1] for t in tiers}
+                info["affix"] = ("prefix" if kinds == {"P"} else "suffix" if kinds == {"S"} else "mixed")
+                info["name"] = " + ".join(str(x.get("name")) for x in subs if x.get("name"))
+                if len(subs) == 1:  # a line made of several affixes has no single roll range
+                    ranges = [f"{g.get('min')}–{g.get('max')}" if g.get("min") != g.get("max") else str(g.get("min"))
+                              for g in subs[0].get("magnitudes") or [] if g.get("min") is not None]
+                    if ranges:
+                        info["range"] = ", ".join(ranges)
             m = m.get("description") or m.get("text") or ""
-        return clean_trade_text(m)
+        info["text"] = clean_trade_text(m)
+        return info if info["text"] else None
 
-    mods = [{"text": t, "kind": kind}
-            for key, kind in MOD_KEYS for m in item.get(key) or [] if (t := mod_text(m))]
+    mods = [x for key, kind in MOD_KEYS for m in item.get(key) or [] if (x := mod_info(m, kind))]
     return {
         "name": clean_trade_text(item.get("name")),
         "base": clean_trade_text(item.get("typeLine") or item.get("baseType")),
@@ -809,7 +855,7 @@ def price_unique(item: Item, ninja: NinjaPrices) -> PriceLine:
     return PriceLine(item.slot, item.name, val, "poe.ninja" if val is not None else "-",
                      "" if val is not None else "ไม่พบใน poe.ninja",
                      query=name_query(item.name, item.base, "UNIQUE"),
-                     icon=ninja.icon(item.name))
+                     icon=ninja.icon(item.name), trend=ninja.trend(item.name))
 
 
 def fmt(value: float | None, ninja: NinjaPrices) -> str:

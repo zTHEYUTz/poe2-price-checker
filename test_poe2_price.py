@@ -243,3 +243,77 @@ def test_item_summary_cleans_trade_item() -> None:
         {"text": "+32% to Fire Resistance", "kind": "explicit"},
     ]
     assert pp.item_summary({})["mods"] == []
+
+
+GAME_ADVANCED = """Item Class: Gloves
+Rarity: Rare
+Doom Grip
+Vaal Gloves
+--------
+Item Level: 81
+--------
+{ Implicit Modifier }
++15(10-20) to Strength (implicit)
+--------
+{ Prefix Modifier "Hale" (Tier: 8) — Life }
++85(80-99) to maximum Life
+{ Suffix Modifier "of the Whelpling" (Tier: 2) — Elemental, Fire, Resistance }
++32(31-35)% to Fire Resistance
+"""
+
+
+def test_parse_game_item_advanced_copy_affixes() -> None:
+    item, _ = pp.parse_game_item(GAME_ADVANCED)
+    got = [(m.text, m.kind, m.affix, m.tier) for m in item.mods]
+    assert got == [
+        ("+15 to Strength", "implicit", "", ""),
+        ("+85 to maximum Life", "explicit", "prefix", "P8"),
+        ("+32% to Fire Resistance", "explicit", "suffix", "S2"),
+    ]
+
+
+def test_item_summary_reads_tiers() -> None:
+    raw = {"explicitMods": [
+        {"description": "+93 to maximum Mana", "mods": [
+            {"name": "Gentian", "tier": "P2", "magnitudes": [{"min": "90", "max": "104"}]}]},
+        {"description": "Gain 4 Life per Enemy Hit", "mods": [
+            {"name": "of Regrowth", "tier": "S2", "magnitudes": [{"min": "4", "max": "4"}]}]},
+    ]}
+    a, b = pp.item_summary(raw)["mods"]
+    assert (a["affix"], a["tier"], a["name"], a["range"]) == ("prefix", "P2", "Gentian", "90–104")
+    assert (b["affix"], b["tier"], b["range"]) == ("suffix", "S2", "4")
+
+
+def test_spark_and_trend() -> None:
+    assert pp.spark_of({"totalChange": 66.67, "data": [0, 51.67, None, 66.67]}) == {
+        "change": 66.67, "spark": [0.0, 51.67, None, 66.67]}
+    assert pp.spark_of(None) == {} and pp.spark_of({"data": [None, None]}) == {}
+    ninja = pp.NinjaPrices("Divine Orb", {}, {}, catalog=[
+        {"name": "Divine Orb", "value": 1.0, "change": 2.5, "spark": [0, 2.5]},
+        {"name": "No Trend", "value": 1.0}])
+    assert ninja.trend("divine orb") == {"change": 2.5, "spark": [0, 2.5]}
+    assert ninja.trend("No Trend") is None
+
+
+def test_build_store(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import web
+    store = web.BuildStore(tmp_path / "builds.json")
+    a = store.upsert({"source": "CODE1", "name": "Deadeye", "title": "Deadeye lvl 100", "total": 146.0})
+    assert store.all()[0]["name"] == "Deadeye"
+    # same source updates instead of duplicating
+    b = store.upsert({"source": "CODE1", "total": 150.5, "checked": True})
+    assert b["id"] == a["id"] and len(store.all()) == 1 and store.all()[0]["total"] == 150.5
+    store.upsert({"id": a["id"], "source": "CODE1", "name": "Renamed"})
+    assert store.all()[0]["name"] == "Renamed"
+    with pytest.raises(ValueError):
+        store.upsert({"source": "  "})
+    assert store.delete(a["id"]) and store.all() == [] and not store.delete("nope")
+
+
+def test_item_summary_combined_affixes() -> None:
+    raw = {"explicitMods": [{"description": "125% increased Energy Shield", "mods": [
+        {"name": "Seraphim's", "tier": "P1", "magnitudes": [{"min": "92", "max": "100"}]},
+        {"name": "Thickened", "tier": "P3", "magnitudes": [{"min": "25", "max": "30"}]}]}]}
+    (m,) = pp.item_summary(raw)["mods"]
+    assert (m["affix"], m["tier"], m["name"]) == ("prefix", "P1+P3", "Seraphim's + Thickened")
+    assert "range" not in m
