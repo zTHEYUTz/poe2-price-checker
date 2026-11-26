@@ -333,6 +333,15 @@
   #tip .rrow b { color: var(--gold); font-weight: 600; white-space: nowrap; }
   #ptSvg circle.jw { fill: #2f8f5b; stroke: #b6f5cf; stroke-width: 16; }
   #ptSvg image { pointer-events: none; }
+  /* grouped build table */
+  tr.grp td { background: var(--panel2); padding: 9px 14px; cursor: pointer; user-select: none; border-top: 1px solid var(--line); }
+  tr.grp:hover td { background: #2a241c; }
+  tr.grp .gt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  tr.grp .gt .arrow { color: var(--gold); width: 12px; display: inline-block; transition: transform .15s; }
+  tr.grp.closed .gt .arrow { transform: rotate(-90deg); }
+  tr.grp .gt b { font-weight: 600; color: var(--text); }
+  tr.grp .gt .gc { color: var(--muted); font-size: 13px; }
+  tr.grp .gt .gs { margin-left: auto; color: var(--gold); font-weight: 600; font-variant-numeric: tabular-nums; }
   footer { color: var(--muted); font-size: 12.5px; margin-top: 28px; }
   @media (max-width: 600px) {
     button.go { margin-left: 0; width: 100%; }
@@ -1214,11 +1223,28 @@ function showNodeTip(target, n, on, w2) {
   $("ptAll").onclick = () => { const ns = treeData ? treeData.nodes.filter((n) => !n[6]) : []; if (ns.length) fitTree(Math.min(...ns.map((n) => n[1])), Math.min(...ns.map((n) => n[2])), Math.max(...ns.map((n) => n[1])), Math.max(...ns.map((n) => n[2])), 300); };
 })();
 
+/* table groups: one header row each, collapsible (remembered) */
+const GROUPS = [
+  { key: "gear", name: "อุปกรณ์", test: (l) => !/^(Rune|Gem)$/.test(l.label) && !/^Tree Jewel/.test(l.label) && !l.swap },
+  { key: "jewel", name: "Jewel ในต้นพาสซีฟ", test: (l) => /^Tree Jewel/.test(l.label) },
+  { key: "rune", name: "รูน", test: (l) => l.label === "Rune" && !l.swap },
+  { key: "gem", name: "เจม", test: (l) => l.label === "Gem" && !l.swap },
+  { key: "swap", name: "ชุดอาวุธสำรอง (อาวุธ รูน เจม)", test: (l) => l.swap },
+];
+const groupOf = (l) => (GROUPS.find((g) => g.test(l)) || GROUPS[0]).key;
+let closedGroups;
+try { closedGroups = new Set(JSON.parse(store.get("poe2closed") || '["rune","gem","swap"]')); } catch { closedGroups = new Set(["rune", "gem", "swap"]); }
+function toggleGroup(key) {
+  closedGroups.has(key) ? closedGroups.delete(key) : closedGroups.add(key);
+  store.set("poe2closed", JSON.stringify([...closedGroups]));
+  renderBuild();
+}
+
 function renderBuild() {
   renderEquip();
   const sorted = [...lines].sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
   const max = Math.max(...lines.map((l) => l.value || 0), 1e-9);
-  $("rows").innerHTML = sorted.map((l) => {
+  const rowHtml = (l) => {
     const f = fmt(l.value);
     const srcCls = l.source === "trade" ? "trade" : l.source === "poe.ninja" ? "ninja" : "";
     const bar = l.value ? `<div class="bar" style="width:${Math.max(2, (l.value / max) * 100)}%"></div>` : "";
@@ -1231,8 +1257,28 @@ function renderBuild() {
       <td class="price ${f ? "" : "none"}">${f ? esc(f[0]) + (f[1] ? `<div class="note">${esc(f[1])}</div>` : "") + trendHtml(l.trend) : "?"}</td>
       <td>${l.query ? `<button class="btn sm" data-shop="${l.idx}">${l.open ? "ซ่อน" : "ร้าน"}</button>` : ""}</td>
     </tr>${l.open ? `<tr class="shoprow"><td colspan="5"><div class="shop" id="shop-${l.idx}"></div></td></tr>` : ""}`;
-  }).join("");
-  sorted.filter((l) => l.open).forEach((l) => shopPanel(l, $("shop-" + l.idx), rates));
+  };
+  let html = "";
+  for (const g of GROUPS) {
+    const ls = sorted.filter((l) => groupOf(l) === g.key);
+    if (!ls.length) continue;
+    const closed = closedGroups.has(g.key);
+    const priced = ls.filter((l) => l.value != null);
+    const inSum = priced.filter(counted);
+    // a group left out of the total (e.g. weapon swap) shows its full value, struck through
+    const shown = inSum.length ? inSum : priced;
+    const f = priced.length ? fmt(shown.reduce((t, l) => t + l.value, 0)) : null;
+    const struck = !inSum.length && priced.length;
+    const missing = ls.length - priced.length;
+    html += `<tr class="grp${closed ? " closed" : ""}" data-grp="${g.key}"><td colspan="5"><div class="gt">
+      <span class="arrow">▾</span><b>${esc(g.name)}</b>
+      <span class="gc">${ls.length} รายการ${missing ? ` · ไม่มีราคา ${missing}` : ""}${g.key === "swap" && !$("inclSwap").checked ? " · ไม่นับในยอด" : ""}</span>
+      <span class="gs"${struck ? ' style="text-decoration:line-through;color:var(--muted)" title="ไม่นับในยอดรวม"' : ""}>${f ? esc(f[0]) : "–"}</span></div></td></tr>`;
+    if (!closed) html += ls.map(rowHtml).join("");
+  }
+  $("rows").innerHTML = html;
+  $("rows").querySelectorAll("tr.grp").forEach((tr) => (tr.onclick = () => toggleGroup(tr.dataset.grp)));
+  sorted.filter((l) => l.open && $("shop-" + l.idx)).forEach((l) => shopPanel(l, $("shop-" + l.idx), rates));
   $("rows").querySelectorAll("[data-shop]").forEach((b) => (b.onclick = () => {
     const l = lines[+b.dataset.shop];
     l.open = !l.open;
